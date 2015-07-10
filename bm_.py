@@ -7,28 +7,35 @@ import pylab as plt
 from io import StringIO
 from collections import defaultdict
 from django.template import Context
+from scipy.linalg import inv
 from sample_functions import n_queens, bm_call, test_django, \
     test_iterative_count, test_list, \
     test_html5libs, fib, test_circle_list
 
 
-class Benchmark():
+class BenchmarkTest():
     NUM_GENERATIONS = 3
 
     def __init__(self, f, batch_sizes, n_samples, func_name=""):
         self.f = f
         self.batch_sizes = batch_sizes
+        self.n_batches = len(batch_sizes)
         self.n_samples = n_samples
         self.func_name = func_name
 
     def check_gc(self):
+        print("{}\nn_smples={} n_batches={} max_batches={}"
+              .format(self.func_name,
+                      self.n_samples, self.n_batches, self.batch_sizes[-1]))
         res_without_gc = self.timeit(with_gc=False)
         res_with_gc = self.timeit(with_gc=True)
 
-        fig = self.plot_result(res_without_gc, label="without_gc", c='b')
+        fig = self.plot_result(res_without_gc, label="without_gc", c='blue',
+                               w="lin_regr")
         fig = self.plot_result(res_with_gc,
-                               fig=fig, label="with_gc", c='r',
-                               batch_shift=float(self.batch_sizes[1])/8)
+                               fig=fig, label="with_gc", c='red',
+                               batch_shift=float(self.batch_sizes[1])/8,
+                               w="lin_regr")
 
         plt.show()
         path = self.save_plot(fig)
@@ -46,7 +53,7 @@ class Benchmark():
         if with_gc:
             gc.disable = lambda: None
 
-        res = np.zeros((n_samples, len(self.batch_sizes)))
+        res = np.zeros((n_samples, self.n_batches))
         gc_info = defaultdict(list)
 
         for sample in range(self.n_samples):
@@ -64,13 +71,22 @@ class Benchmark():
         return res, gc_info
 
     def _plot(self, ax, full_res,
-              label="", c='b', s=240, batch_shift=0.):
+              label="", c='b', s=240, batch_shift=0.,
+              w=None, alpha=0.2):
         batch_sizes_ = self.batch_sizes + batch_shift
         res, gc_info = full_res
         mean_res = res.mean(axis=0)
         for res_ in res:
-            ax.scatter(batch_sizes_, res_, c=c, s=s, alpha=0.2)
-        ax.plot(batch_sizes_, mean_res, c=c, linewidth=2, label=label)
+            ax.scatter(batch_sizes_, res_, c=c, s=s, alpha=alpha)
+        ax.scatter(0, 0, c=c, label=label)
+        ax.plot(batch_sizes_, mean_res,
+                c=c, linewidth=2, label="mean")
+
+        if w is "lin_regr":
+            X, y = self.get_features(full_res)
+            w = self.lin_regression(X, y)
+            ax.plot(batch_sizes_, X.dot(w), 'r--', c="dark"+c,
+                    label="lin_regr, w={}".format(w), linewidth=2)
 
         ymin, _ = ax.get_ylim()
         for batch in gc_info:
@@ -114,6 +130,30 @@ class Benchmark():
         fig.savefig(path)
         return path
 
+    def get_features(self, full_res):
+        res, gc_info = full_res
+        if len(gc_info):
+            X = np.array([self.batch_sizes,
+                 np.zeros(self.n_batches)]).T
+
+            for i, batch in enumerate(batch_sizes):
+                if batch in gc_info:
+                    X[i][1] = self._sum_collections(gc_info[batch])
+        else:
+            X = np.array([self.batch_sizes]).T
+        y =res.mean(axis=0)
+        return X, y
+
+    def lin_regression(self, X, y):
+        w = inv(X.T.dot(X)).dot(X.T).dot(y)
+        return w
+
+    def _sum_collections(self, gc_stat):
+        res = 0
+        for gen_info in gc_stat[0]:
+            res += gen_info.get("collections", 0)
+        return res
+
     @staticmethod
     def diff_stats(stats0, stats1):
         res = []
@@ -142,12 +182,15 @@ class Benchmark():
 if __name__ == "__main__":
 
     batch_sizes = np.arange(0, 100, 10).astype(np.int)
-    n_samples = 100
+    n_samples = 10
     func_name = "bm_html5"
 
-    batch_sizes = np.arange(0, 50000, 5000).astype(np.int)
-    n_samples = 100
-    func_name = "bm_circle_list"
+    # batch_sizes = np.arange(0, 50000, 5000).astype(np.int)
+    # n_samples = 100
+    #
+    # batch_sizes = np.arange(0, 150000, 5000).astype(np.int)
+    # n_samples = 1000
+    # func_name = "bm_circle_list"
 
     f = {
         'bm_ai': functools.partial(n_queens, 8),
@@ -165,5 +208,5 @@ if __name__ == "__main__":
         'bm_circle_list': test_circle_list
     }[func_name]
 
-    Benchmark(f, batch_sizes, n_samples, func_name=func_name).check_gc()
+    BenchmarkTest(f, batch_sizes, n_samples, func_name=func_name).check_gc()
 
