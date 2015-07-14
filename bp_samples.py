@@ -22,18 +22,22 @@ def circle_list(n):
         arr.append(arr)
 
 
-def factorial_sample():
-    n = 100
-    res = bp.run([bp.case(factorial, n), bp.case(factorial_slow, n)])
-    bp.plot_results(res, labels=["!", "!_slow"])
-    plt.show()
-
-
 def noop():
     pass
 
 
-def html_sample():
+def factorial_sample(show_plot=False):
+    n = 100
+    res = bp.run([bp.case(factorial, n, func_name="factorial"),
+                  bp.case(factorial_slow, n, func_name="factorial_slow")])
+    print(res)
+
+    if show_plot:
+        bp.plot_results(res)
+        plt.show()
+
+
+def html_sample(show_plot=False):
     data = StringIO(open(
         os.path.join(os.path.join(os.path.dirname(__file__), "data"),
                      "html5lib_spec.html")).read())
@@ -45,17 +49,25 @@ def html_sample():
                  n_samples=100,
                  max_batch=100,
                  n_batches=10)
+    print(res)
 
-    bp.plot_results(res, ["with_gc", "without_gc"], title="HTML")
-    plt.show()
+    if show_plot:
+        bp.plot_results(res, ["with_gc", "without_gc"], title="HTML")
+        plt.show()
 
 
-def circle_list_sample():
-    res = bp.run([bp.case(circle_list, 100),
-                  bp.case(circle_list, 200),
-                  bp.case(circle_list, 300)])
-    bp.plot_results(res, title="Circle_list")
-    plt.show()
+def circle_list_sample(show_plot=False):
+    res = bp.run([bp.case(circle_list, 100,
+                          func_name="circle_list_100"),
+                  bp.case(circle_list, 200,
+                          func_name="circle_list_200"),
+                  bp.case(circle_list, 300,
+                          func_name="circle_list_300")])
+    print(res)
+
+    if show_plot:
+        bp.plot_results(res, title="Circle_list")
+        plt.show()
 
 
 def noop_sample():
@@ -63,11 +75,11 @@ def noop_sample():
                  n_samples=100,
                  max_batch=100,
                  n_batches=10)
-    print(res[0].means[0])
+    print(res)
 
 
 if __name__ == "__main__":
-    html_sample(),
+    # html_sample(),
     # factorial_sample()
-    # circle_list_sample()
+    circle_list_sample()
     # noop_sample()
