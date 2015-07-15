@@ -4,13 +4,14 @@ import os
 import timeit
 import numpy as np
 import pylab as plt
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from numpy.linalg import LinAlgError
 from prettytable import PrettyTable
 from scipy.linalg import inv
 from scipy.stats.mstats import mquantiles
 
 GC_NUM_GENERATIONS = 3
+Stat = namedtuple('Stat', 'val se ci')
 
 
 class BmRes():
@@ -22,18 +23,15 @@ class BmRes():
         self.func_name = func_name
         self.n_batches = len(batch_sizes)
         self.n_samples = len(res)
-        self.ci_alpha = 0.95
-        self.means, self.ci_means = self.evaluate_stats(f_stat=np.mean,
-                                                        alpha=self.ci_alpha)
+        self.ci_params = dict(gamma=0.95, type_ci="tquant")
+        self.stat_means = self.evaluate_stats(f_stat=np.mean, **self.ci_params)
+        self.means = [stat_mean.val for stat_mean in self.stat_means]
         self.collections = self._get_collections()
 
     def evaluate_stats(self, f_stat, **kwargs):
-        stats, ci = [], []
-        for i, batch_sample in enumerate(self.res.T):
-            _stat, _ci = bootstrap(batch_sample, f_stat=f_stat, **kwargs)
-            stats.append(_stat)
-            ci.append(_ci)
-        return np.array(stats), np.array(ci)
+        stats = [get_stat(batch_sample, f_stat, **kwargs)
+                 for batch_sample in self.res.T]
+        return stats
 
     def _get_collections(self):
         res = []
@@ -55,11 +53,15 @@ class BmRes():
         return X, y
 
     def __repr__(self):
-        table = PrettyTable(["Batch's size", "Mean time",
-                             "CI", "GC collections"])
-        for batch, mean, ci, gc_c in zip(self.batch_sizes, self.means,
-                                         self.ci_means, self.collections):
-            table.add_row([batch, mean, ci, gc_c])
+        table = PrettyTable(["Batch's size",
+                             "Mean time",
+                             "SE",
+                             "CI_{}[{}]".format(self.ci_params["type_ci"],
+                                                    self.ci_params["gamma"]),
+                             "GC collections"])
+        for batch, stat_mean, gc_c in zip(self.batch_sizes, self.stat_means, self.collections):
+            table.add_row([batch, stat_mean.val, stat_mean.se,
+                           stat_mean.ci, gc_c])
 
         table.align["Mean time"] = 'l'
 
@@ -76,19 +78,67 @@ class BmRes():
         return title + str_ + str(table)
 
 
-def confidence_interval(x, alpha=0.95):
-    beta = (1 - alpha) / 2
-    return mquantiles(x, prob=[beta, 1-beta])
+def _get_mean_se_stat(stat_b, stat=None):
+    mean_stat = np.mean(stat_b) if stat is None \
+        else 2*stat - np.mean(stat_b)
+    n = len(stat_b)
+    se_stat = np.std(stat_b) * np.sqrt(n/(n-1))
+    return mean_stat, se_stat
+
+
+def get_stat(X, f_stat, B=100, type_ci="efr", **ci_params):
+    X_b = bootstrap(X, B=B)
+    if type_ci == "efr":
+        res = confidence_interval_efr(X, f_stat, X_b=X_b, **ci_params)
+    elif type_ci == "quant":
+        res = confidence_interval_quant(X, f_stat, X_b=X_b, **ci_params)
+    elif type_ci == "tquant":
+        res = confidence_interval_tquant(X, f_stat, X_b=X_b, **ci_params)
+    else:
+        assert False, "confidence interval {} is not defined"
+    return res
+
+
+def confidence_interval_efr(X, f_stat, X_b=None, gamma=0.95,
+                            **bootstrap_kwargs):
+    alpha = (1 - gamma) / 2
+    if X_b is None:
+        X_b = bootstrap(X, **bootstrap_kwargs)
+    stat_b = np.array(list(map(f_stat, X_b)))
+    return Stat(*_get_mean_se_stat(stat_b),
+                ci=mquantiles(stat_b, prob=[alpha, 1-alpha]))
+
+
+def confidence_interval_quant(X, f_stat, X_b=None, gamma=0.95,
+                              **bootstrap_kwargs):
+    alpha = (1 - gamma) / 2
+    if X_b is None:
+        X_b = bootstrap(X, **bootstrap_kwargs)
+    stat_b = np.array(list(map(f_stat, X_b)))
+    mean_stat, se_stat = _get_mean_se_stat(stat_b)
+    q = mquantiles(stat_b-mean_stat, prob=[alpha, 1-alpha])
+    return Stat(mean_stat, se_stat, [mean_stat-q[1], mean_stat-q[0]])
+
+
+def confidence_interval_tquant(X, f_stat, X_b=None, gamma=0.95,
+                               **bootstrap_kwargs):
+    alpha = (1 - gamma) / 2
+    if X_b is None:
+        X_b = bootstrap(X, **bootstrap_kwargs)
+    stat_b = np.array(list(map(f_stat, X_b)))
+    mean_stat, se_stat = _get_mean_se_stat(stat_b)
+    q = mquantiles((stat_b-mean_stat)/se_stat, prob=[alpha, 1-alpha])
+    return Stat(mean_stat, se_stat,
+                [mean_stat-se_stat*q[1], mean_stat-se_stat*q[0]])
 
 
 def index_bootstrap(n, size):
     return np.random.random_integers(0, n-1, size=(size, n))
 
 
-def bootstrap(X, f_stat=np.mean, B=10, alpha=0.95):
+def bootstrap(X, B=100):
     indexes = index_bootstrap(len(X), size=B)
-    res = [f_stat(X[ind]) for ind in indexes]
-    return np.mean(res), confidence_interval(res, alpha)
+    return list(map(lambda ind: X[ind], indexes))
 
 
 def case(f, *args, run_params=None, func_name="", **kwargs):

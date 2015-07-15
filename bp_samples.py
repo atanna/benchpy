@@ -1,7 +1,6 @@
 import html5lib
 import os
 import benchpy as bp
-import numpy as np
 import pylab as plt
 from io import StringIO
 from math import factorial
@@ -43,8 +42,10 @@ def html_sample(show_plot=False):
                      "html5lib_spec.html")).read())
 
     res = bp.run([bp.case(html_parse, data=data,
+                          func_name="Html",
                           run_params=dict(with_gc=True)),
                   bp.case(html_parse, data=data,
+                          func_name="Html",
                           run_params=dict(with_gc=False))],
                  n_samples=100,
                  max_batch=100,
