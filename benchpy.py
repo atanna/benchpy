@@ -9,6 +9,7 @@ from numpy.linalg import LinAlgError
 from prettytable import PrettyTable
 from scipy.linalg import inv
 from scipy.stats.mstats import mquantiles
+from scipy.stats import norm
 
 GC_NUM_GENERATIONS = 3
 Stat = namedtuple('Stat', 'val se ci')
@@ -29,7 +30,7 @@ class BmRes():
         self.collections = self._get_collections()
 
     def evaluate_stats(self, f_stat, **kwargs):
-        stats = [get_stat(batch_sample, f_stat, **kwargs)
+        stats = [get_stat(batch_sample*100, f_stat, **kwargs)
                  for batch_sample in self.res.T]
         return stats
 
@@ -59,9 +60,12 @@ class BmRes():
                              "CI_{}[{}]".format(self.ci_params["type_ci"],
                                                     self.ci_params["gamma"]),
                              "GC collections"])
-        for batch, stat_mean, gc_c in zip(self.batch_sizes, self.stat_means, self.collections):
-            table.add_row([batch, stat_mean.val, stat_mean.se,
-                           stat_mean.ci, gc_c])
+
+        for batch, stat_mean, gc_c in \
+                zip(self.batch_sizes, self.stat_means, self.collections):
+            table.add_row([batch,
+                           stat_mean.val, stat_mean.se, stat_mean.ci,
+                           gc_c])
 
         table.align["Mean time"] = 'l'
 
@@ -132,11 +136,43 @@ def confidence_interval_tquant(X, f_stat, X_b=None, gamma=0.95,
                 [mean_stat-se_stat*q[1], mean_stat-se_stat*q[0]])
 
 
+def _get_z_alph(a, z_0, alpha):
+    _z_alpa = norm.ppf(alpha)
+    return z_0 + (z_0 + _z_alpa) / (1 - a*(z_0 + _z_alpa))
+
+
+def confidence_interval_for_mean(X, gamma=0.95, **bootstrap_kwargs):
+    alpha = (1 - gamma) / 2
+    mean_x = np.mean(X)
+    a = 1./6 * np.sum((X-mean_x)**3) / (np.sum((X-mean_x)**2)**(3/2))
+    X_b = bootstrap(X, **bootstrap_kwargs)
+    stat_b = np.array(X_b).mean(axis=1)
+    mean_stat, se_stat = _get_mean_se_stat(stat_b)
+    stat_b.sort()
+    n = len(stat_b)
+    z_0 = norm.ppf(stat_b.searchsorted(mean_stat) / n)
+    ci = mquantiles(stat_b, prob=[norm.cdf(_get_z_alph(a, z_0, alpha)),
+                                  norm.cdf(_get_z_alph(a, z_0, 1-alpha))])
+    return Stat(mean_stat, se_stat, ci)
+
+
+def confidence_interval_for_mean2(X, gamma=0.95):
+    alpha = (1 - gamma) / 2
+    mean_x = np.mean(X)
+    a = 1./6 * np.sum((X-mean_x)**3) / (np.sum((X-mean_x)**2)**(3/2))
+    _z_alpha = norm.ppf(alpha)
+    _z_alpha2 = norm.ppf(1-alpha)
+    sigma = X.std()
+    q1 = sigma*(_z_alpha + a*(2*_z_alpha**2 + 1))
+    q2 = sigma*(_z_alpha2 + a*(2*_z_alpha2**2 + 1))
+    return Stat(mean_x, sigma, [mean_x + q1, mean_x + q2])
+
+
 def index_bootstrap(n, size):
     return np.random.random_integers(0, n-1, size=(size, n))
 
 
-def bootstrap(X, B=100):
+def bootstrap(X, B=1000):
     indexes = index_bootstrap(len(X), size=B)
     return list(map(lambda ind: X[ind], indexes))
 
