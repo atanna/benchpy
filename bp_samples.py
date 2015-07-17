@@ -25,14 +25,18 @@ def noop():
     pass
 
 
+def run_exception():
+    raise IndexError
+
+
 def factorial_sample(show_plot=False):
     n = 100
-    res = bp.run([bp.case(factorial, n, func_name="factorial"),
-                  bp.case(factorial_slow, n, func_name="factorial_slow")])
+    res = bp.run([bp.bench(factorial, n, func_name="factorial"),
+                  bp.bench(factorial_slow, n, func_name="factorial_slow")])
     print(res)
 
     if show_plot:
-        bp.plot_results(res)
+        bp.plot_group(res)
         plt.show()
 
 
@@ -41,46 +45,52 @@ def html_sample(show_plot=False):
         os.path.join(os.path.join(os.path.dirname(__file__), "data"),
                      "html5lib_spec.html")).read())
 
-    res = bp.run([bp.case(html_parse, data=data,
-                          func_name="Html",
-                          run_params=dict(with_gc=True)),
-                  bp.case(html_parse, data=data,
-                          func_name="Html",
-                          run_params=dict(with_gc=False))],
+    res = bp.run([bp.bench(html_parse, data,
+                           run_params=dict(with_gc=True),
+                           func_name="Html"),
+                  bp.bench(html_parse, data,
+                           run_params=dict(with_gc=False),
+                           func_name="Html")],
                  n_samples=100,
                  max_batch=100,
                  n_batches=10)
     print(res)
 
     if show_plot:
-        bp.plot_results(res, ["with_gc", "without_gc"], title="HTML")
+        bp.plot_group(res, ["with_gc", "without_gc"], title="HTML")
         plt.show()
 
 
 def circle_list_sample(show_plot=False):
-    res = bp.run([bp.case(circle_list, 100,
-                          func_name="circle_list_100"),
-                  bp.case(circle_list, 200,
-                          func_name="circle_list_200"),
-                  bp.case(circle_list, 300,
-                          func_name="circle_list_300")])
+    res = bp.run(bp.group("Circle list",
+                          [bp.bench(circle_list, 100, func_name="100"),
+                           bp.bench(circle_list, 200, func_name="200"),
+                           bp.bench(circle_list, 300, func_name="300")],
+                          with_gc=True,
+                          n_samples=10))
     print(res)
 
     if show_plot:
-        bp.plot_results(res, title="Circle_list")
+        bp.plot_group(res)
         plt.show()
 
 
 def noop_sample():
-    res = bp.run([bp.case(noop)],
+    res = bp.run([bp.bench(noop)],
                  n_samples=100,
                  max_batch=100,
                  n_batches=10)
+    print(res)
+
+
+def exception_sample():
+    res = bp.run([bp.bench(run_exception)])
     print(res)
 
 
 if __name__ == "__main__":
     # html_sample(),
     # factorial_sample()
-    circle_list_sample()
+    circle_list_sample(False)
     # noop_sample()
+    # exception_sample()
