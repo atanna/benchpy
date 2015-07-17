@@ -32,19 +32,25 @@ class BmRes():
         self.stat_means = self.evaluate_stats(f_stat=np.mean, **self.ci_params)
         self.means = np.array([stat_mean.val for stat_mean in self.stat_means])
         self.collections = self._get_collections()
+        self.mean_collections = np.mean(self.collections[1:] /
+                                self.batch_sizes[1:])
         try:
-            self.regr = self.regression()
+            self.regr = self.regression(**self.ci_params)
             stat_w = self.regr.stat_w
             if len(stat_w.val) > 1:
+                ci = stat_w.ci[0]
+                ci[0] -= self.mean_collections*np.abs(stat_w.ci[1][0])
+                ci[1] += self.mean_collections*np.abs(stat_w.ci[1][1])
                 self.stat_time = \
-                    Stat(stat_w.val[0], stat_w.std[0], stat_w.ci[:,0])
+                    Stat(stat_w.val.dot([1, self.mean_collections]),
+                         stat_w.std.dot([1, self.mean_collections]),
+                         ci)
             else:
-                self.stat_time = Stat(stat_w.val, stat_w.std, stat_w.ci[0])
+                self.stat_time = Stat(stat_w.val[0], stat_w.std[0], stat_w.ci[0])
         except LinAlgError:
             self.stat_time = \
                 Stat(np.mean(self.means[1:] / self.batch_sizes[1:]),
                      None, [None, None])
-
 
     def evaluate_stats(self, f_stat, **kwargs):
         stats = [get_stat(batch_sample, f_stat, **kwargs)
@@ -61,11 +67,12 @@ class BmRes():
             res.append(_res)
         return np.array(res)
 
-    def regression(self):
+    def regression(self, **kwargs):
         X, y = self.get_features()
         stat_w = get_stat(
             np.concatenate((X, y[:, np.newaxis]), axis=1),
-            lin_regression)
+            lin_regression,
+            **kwargs)
         return Regression(X, y, stat_w)
 
     def get_features(self):
@@ -111,10 +118,11 @@ class BmRes():
                              "CI_{}[{}]".format(self.ci_params["type_ci"],
                                                 self.ci_params["gamma"]),
                              "GC collections"])
-        collections = np.round(np.mean(self.collections[1:] /
-                                       self.batch_sizes[1:]), 2)
-        table.add_row([self.stat_time.val, self.stat_time.std,
-                       self.stat_time.ci, collections])
+        n_point = 6
+        table.add_row([np.round(self.stat_time.val, n_point),
+                       np.round(self.stat_time.std, n_point),
+                       np.round(self.stat_time.ci, n_point),
+                       np.round(self.mean_collections, 2)])
 
         str_ = "{n_samples} samples, {n_batches} batches  # {gc}\n" \
             .format(func_name=self.func_name,
@@ -133,11 +141,37 @@ class GroupRes():
     def __init__(self, name, results):
         self.name = name
         self.results = results
+        res = results[0]
+        self.ci_params = res.ci_params
+        self.n_samples = res.n_samples
+        self.batch_sizes = res.batch_sizes
+        self.n_batches = res.n_batches
 
     def __repr__(self):
         title = "Group: {}\n".format(self.name)
-        sep = "-"*len(title)+"\n"
-        return sep + title + sep + str(self.results)
+        table = PrettyTable(["func_name",
+                             "Time",
+                             "std",
+                             "CI_{}[{}]".format(self.ci_params["type_ci"],
+                                                self.ci_params["gamma"]),
+                             "GC collections",
+                             "with_gc"])
+        n_point = 6
+        for bm_res in self.results:
+            table.add_row([bm_res.func_name,
+                           np.round(bm_res.stat_time.val, n_point),
+                           np.round(bm_res.stat_time.std, n_point),
+                           np.round(bm_res.stat_time.ci, n_point),
+                           np.round(bm_res.mean_collections, 4),
+                           bm_res.with_gc])
+        str_ = "{n_samples} samples, {n_batches} batches \n" \
+            .format(func_name=self.name,
+                    n_samples=self.n_samples,
+                    n_batches=self.n_batches)
+
+        title = "\n{group:~^{s}}\n" \
+            .format(group=self.name, s=len(str_))
+        return title + str(table)
 
 
 class BmException(Exception):
@@ -187,7 +221,8 @@ def confidence_interval_efr(X, f_stat, X_b=None, gamma=0.95,
         except Exception:
             continue
     return Stat(*_get_mean_se_stat(np.array(stat_b)),
-                ci=mquantiles(stat_b, prob=[alpha, 1 - alpha], axis=0))
+                ci=np.array(mquantiles(stat_b, prob=[alpha, 1 - alpha],
+                                       axis=0).T))
 
 
 def confidence_interval_quant(X, f_stat, X_b=None, gamma=0.95,
@@ -195,10 +230,18 @@ def confidence_interval_quant(X, f_stat, X_b=None, gamma=0.95,
     alpha = (1 - gamma) / 2
     if X_b is None:
         X_b = bootstrap(X, **bootstrap_kwargs)
-    stat_b = np.array(list(map(f_stat, X_b)))
+    stat_b = []
+    for x_b in X_b:
+        try:
+            stat_b.append(f_stat(x_b))
+        except Exception:
+            continue
+    stat_b = np.array(stat_b)
     mean_stat, se_stat = _get_mean_se_stat(stat_b)
-    q = mquantiles(stat_b - mean_stat, prob=[alpha, 1 - alpha])
-    return Stat(mean_stat, se_stat, [mean_stat - q[1], mean_stat - q[0]])
+    q = np.array(mquantiles(stat_b - mean_stat,
+                            prob=[alpha, 1 - alpha], axis=0))
+    return Stat(mean_stat, se_stat,
+                np.array([mean_stat - q[1], mean_stat - q[0]]).T)
 
 
 def confidence_interval_tquant(X, f_stat, X_b=None, gamma=0.95,
@@ -206,11 +249,19 @@ def confidence_interval_tquant(X, f_stat, X_b=None, gamma=0.95,
     alpha = (1 - gamma) / 2
     if X_b is None:
         X_b = bootstrap(X, **bootstrap_kwargs)
-    stat_b = np.array(list(map(f_stat, X_b)))
+    stat_b = []
+    for x_b in X_b:
+        try:
+            stat_b.append(f_stat(x_b))
+        except Exception:
+            continue
+    stat_b = np.array(stat_b)
     mean_stat, se_stat = _get_mean_se_stat(stat_b)
-    q = mquantiles((stat_b - mean_stat) / se_stat, prob=[alpha, 1 - alpha])
+    q = np.array(mquantiles((stat_b - mean_stat) / se_stat, prob=[alpha, 1 - alpha],
+                   axis=0))
     return Stat(mean_stat, se_stat,
-                [mean_stat - se_stat * q[1], mean_stat - se_stat * q[0]])
+                np.array([mean_stat - se_stat * q[1],
+                          mean_stat - se_stat * q[0]]).T)
 
 
 def _get_z_alph(a, z_0, alpha):
@@ -361,7 +412,7 @@ def _dark_color(color, alpha=0.1):
     return np.array(list(map(lambda x: 0 if x < 0 else x, color - alpha)))
 
 
-def plot_result(bm_res, fig=None, n_ax=0, label="",
+def _plot_result(bm_res, fig=None, n_ax=0, label="",
                 c=None,
                 title="",
                 s=240, shift=0., alpha=0.2,
@@ -412,7 +463,7 @@ def plot_result(bm_res, fig=None, n_ax=0, label="",
     return fig
 
 
-def plot_group(gr_res, labels=None, **kwargs):
+def _plot_group(gr_res, labels=None, **kwargs):
     list_res = gr_res.results
     n_res = len(gr_res.results)
     if labels is None:
@@ -426,20 +477,22 @@ def plot_group(gr_res, labels=None, **kwargs):
     fig.add_subplot(111)
     add_text=True
     for i, res, label in zip(range(n_res), list_res, labels):
-        fig = plot_result(res, **dict(fig=fig, label=label,
-                                      title=gr_res.name,
-                                      c=np.random.rand(3, 1),
-                                      add_text=add_text,
-                                      shift=batch_shift * i, **kwargs))
+        d = dict(fig=fig, label=label,
+                                        title=gr_res.name,
+                                        c=np.random.rand(3, 1),
+                                        add_text=add_text,
+                                        shift=batch_shift * i)
+        d.update(kwargs)
+        fig = _plot_result(res, **d)
         add_text=False
     return fig
 
 
 def plot_results(res, **kwargs):
     if isinstance(res, BmRes):
-        return plot_result(res, **kwargs)
+        return _plot_result(res, **kwargs)
     elif isinstance(res, GroupRes):
-        return plot_group(res, **kwargs)
+        return _plot_group(res, **kwargs)
     elif type(res) == list:
         return [plot_results(_res) for _res in res]
     else:
