@@ -15,7 +15,7 @@ GC_NUM_GENERATIONS = 3
 Stat = namedtuple("Stat", 'val std ci')
 Bench = namedtuple("Case", 'name f run_params')
 Group = namedtuple("Group", 'name group run_params')
-Regression = namedtuple("Regression", 'X y stat_w')
+Regression = namedtuple("Regression", 'X y stat_w stat_y r2')
 
 
 class BmRes():
@@ -36,24 +36,15 @@ class BmRes():
                                 self.batch_sizes[1:])
         try:
             self.regr = self.regression(**self.ci_params)
-            stat_w = self.regr.stat_w
-            if len(stat_w.val) > 1:
-                ci = stat_w.ci[0]
-                ci[0] -= self.mean_collections*np.abs(stat_w.ci[1][0])
-                ci[1] += self.mean_collections*np.abs(stat_w.ci[1][1])
-                self.stat_time = \
-                    Stat(stat_w.val.dot([1, self.mean_collections]),
-                         stat_w.std.dot([1, self.mean_collections]),
-                         ci)
-            else:
-                self.stat_time = Stat(stat_w.val[0], stat_w.std[0], stat_w.ci[0])
+            self.stat_time = self.regr.stat_y
         except LinAlgError:
+            self.regr = None
             self.stat_time = \
                 Stat(np.mean(self.means[1:] / self.batch_sizes[1:]),
                      None, [None, None])
 
     def evaluate_stats(self, f_stat, **kwargs):
-        stats = [get_stat(batch_sample, f_stat, **kwargs)
+        stats = [get_stat(X=batch_sample, f_stat=f_stat, **kwargs)
                  for batch_sample in self.res.T]
         return stats
 
@@ -69,11 +60,21 @@ class BmRes():
 
     def regression(self, **kwargs):
         X, y = self.get_features()
-        stat_w = get_stat(
-            np.concatenate((X, y[:, np.newaxis]), axis=1),
-            lin_regression,
-            **kwargs)
-        return Regression(X, y, stat_w)
+        X_b = bootstrap(np.concatenate((X, y[:, np.newaxis]), axis=1),
+                        **kwargs)
+        arr_st_w = collect_stat(X_b=X_b, f_stat=lin_regression, **kwargs)
+        stat_w = get_stat(arr_stat=arr_st_w, **kwargs)
+
+        if arr_st_w.shape[1] > 1:
+            x = np.array([1, self.mean_collections])
+        else:
+            x = np.array([1])
+        arr_st_y = np.array([x.dot(w) for w in arr_st_w])
+        stat_y = get_stat(arr_stat=arr_st_y, **kwargs)
+        return Regression(X, y, stat_w, stat_y, r2(y, X.dot(stat_w.val)))
+
+    def calculate_outliers(self, arr_r2, threshold=0.9):
+        return np.sum(arr_r2 < threshold) / len(arr_r2)
 
     def get_features(self):
         if len(self.gc_info):
@@ -87,15 +88,15 @@ class BmRes():
     def info(self):
         table = PrettyTable(["Batch's size",
                              "mean",
-                             "std",
                              "CI_{}[{}]".format(self.ci_params["type_ci"],
                                                 self.ci_params["gamma"]),
+                             "std",
                              "GC collections"])
 
         for batch, stat_mean, gc_c in \
                 zip(self.batch_sizes, self.stat_means, self.collections):
             table.add_row([batch,
-                           stat_mean.val, stat_mean.std, stat_mean.ci,
+                           stat_mean.val, stat_mean.ci, stat_mean.std,
                            gc_c])
 
         table.align["mean"] = 'l'
@@ -114,14 +115,16 @@ class BmRes():
 
     def __repr__(self):
         table = PrettyTable(["Time",
-                             "std",
                              "CI_{}[{}]".format(self.ci_params["type_ci"],
                                                 self.ci_params["gamma"]),
+                             "std",
+                             "R2",
                              "GC collections"])
-        n_point = 6
+        n_point = 8
         table.add_row([np.round(self.stat_time.val, n_point),
-                       np.round(self.stat_time.std, n_point),
                        np.round(self.stat_time.ci, n_point),
+                       np.round(self.stat_time.std, n_point),
+                       np.round(self.regr.r2, n_point),
                        np.round(self.mean_collections, 2)])
 
         str_ = "{n_samples} samples, {n_batches} batches  # {gc}\n" \
@@ -148,20 +151,21 @@ class GroupRes():
         self.n_batches = res.n_batches
 
     def __repr__(self):
-        title = "Group: {}\n".format(self.name)
         table = PrettyTable(["func_name",
                              "Time",
-                             "std",
                              "CI_{}[{}]".format(self.ci_params["type_ci"],
                                                 self.ci_params["gamma"]),
+                             "std",
+                             "R2",
                              "GC collections",
                              "with_gc"])
-        n_point = 6
+        n_point = 8
         for bm_res in self.results:
             table.add_row([bm_res.func_name,
                            np.round(bm_res.stat_time.val, n_point),
-                           np.round(bm_res.stat_time.std, n_point),
                            np.round(bm_res.stat_time.ci, n_point),
+                           np.round(bm_res.stat_time.std, n_point),
+                           np.round(bm_res.regr.r2, n_point),
                            np.round(bm_res.mean_collections, 4),
                            bm_res.with_gc])
         str_ = "{n_samples} samples, {n_batches} batches \n" \
@@ -187,56 +191,62 @@ def _get_mean_se_stat(stat_b, stat=None):
     return mean_stat, se_stat
 
 
-def get_stat(X, f_stat, B=1000, type_ci="efr", **ci_params):
+def get_stat(type_ci="efr", **kwargs):
     """
     :param X:
     :param f_stat:
     :param B: bootstrap sample size (to define ci)
     :param type_ci: type of confidence interval {'efr', 'quant', 'tquant'}
-    :param ci_params:
+    :param kwargs:
     :return:
     """
-    X_b = bootstrap(X, B=B)
     if type_ci == "efr":
-        res = confidence_interval_efr(X, f_stat, X_b=X_b, **ci_params)
+        res = confidence_interval_efr(**kwargs)
     elif type_ci == "quant":
-        res = confidence_interval_quant(X, f_stat, X_b=X_b, **ci_params)
+        res = confidence_interval_quant(**kwargs)
     elif type_ci == "tquant":
-        res = confidence_interval_tquant(X, f_stat, X_b=X_b, **ci_params)
+        res = confidence_interval_tquant(**kwargs)
     else:
         raise BmException("type of confidence interval '{}' is not defined"
                           .format(type_ci))
     return res
 
 
-def confidence_interval_efr(X, f_stat, X_b=None, gamma=0.95,
-                            **bootstrap_kwargs):
+def r2(y_true, y_pred):
+    return 1 - np.mean((y_true-y_pred)**2) / y_true.std()
+
+
+def collect_stat(X=None, f_stat=None, X_b=None, arr_stat=None,
+                 **bootstrap_kwargs):
+    if arr_stat is None:
+        if f_stat is None:
+           raise BmException("f_stat must be defined")
+        if X_b is None and X is None:
+            raise BmException("X or X_b must be defined")
+        if X_b is None:
+            X_b = bootstrap(X, **bootstrap_kwargs)
+        arr_stat = []
+
+        for x_b in X_b:
+            try:
+                arr_stat.append(f_stat(x_b))
+            except Exception:
+                continue
+        arr_stat = np.array(arr_stat)
+    return arr_stat
+
+
+def confidence_interval_efr(gamma=0.95, **kwargs):
     alpha = (1 - gamma) / 2
-    if X_b is None:
-        X_b = bootstrap(X, **bootstrap_kwargs)
-    stat_b = []
-    for x_b in X_b:
-        try:
-            stat_b.append(f_stat(x_b))
-        except Exception:
-            continue
+    stat_b = collect_stat(**kwargs)
     return Stat(*_get_mean_se_stat(np.array(stat_b)),
                 ci=np.array(mquantiles(stat_b, prob=[alpha, 1 - alpha],
                                        axis=0).T))
 
 
-def confidence_interval_quant(X, f_stat, X_b=None, gamma=0.95,
-                              **bootstrap_kwargs):
+def confidence_interval_quant(gamma=0.95, **kwargs):
     alpha = (1 - gamma) / 2
-    if X_b is None:
-        X_b = bootstrap(X, **bootstrap_kwargs)
-    stat_b = []
-    for x_b in X_b:
-        try:
-            stat_b.append(f_stat(x_b))
-        except Exception:
-            continue
-    stat_b = np.array(stat_b)
+    stat_b = collect_stat(**kwargs)
     mean_stat, se_stat = _get_mean_se_stat(stat_b)
     q = np.array(mquantiles(stat_b - mean_stat,
                             prob=[alpha, 1 - alpha], axis=0))
@@ -244,21 +254,13 @@ def confidence_interval_quant(X, f_stat, X_b=None, gamma=0.95,
                 np.array([mean_stat - q[1], mean_stat - q[0]]).T)
 
 
-def confidence_interval_tquant(X, f_stat, X_b=None, gamma=0.95,
-                               **bootstrap_kwargs):
+def confidence_interval_tquant(gamma=0.95, **kwargs):
     alpha = (1 - gamma) / 2
-    if X_b is None:
-        X_b = bootstrap(X, **bootstrap_kwargs)
-    stat_b = []
-    for x_b in X_b:
-        try:
-            stat_b.append(f_stat(x_b))
-        except Exception:
-            continue
-    stat_b = np.array(stat_b)
+    stat_b = collect_stat(**kwargs)
     mean_stat, se_stat = _get_mean_se_stat(stat_b)
-    q = np.array(mquantiles((stat_b - mean_stat) / se_stat, prob=[alpha, 1 - alpha],
-                   axis=0))
+    q = np.array(mquantiles((stat_b - mean_stat) / se_stat,
+                            prob=[alpha, 1 - alpha],
+                            axis=0))
     return Stat(mean_stat, se_stat,
                 np.array([mean_stat - se_stat * q[1],
                           mean_stat - se_stat * q[0]]).T)
@@ -302,7 +304,7 @@ def index_bootstrap(n, size):
     return np.random.random_integers(0, n - 1, size=(size, n))
 
 
-def bootstrap(X, B=1000):
+def bootstrap(X, B=1000, **kwargs):
     indexes = index_bootstrap(len(X), size=B)
     return list(map(lambda ind: X[ind], indexes))
 

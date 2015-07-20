@@ -106,5 +106,5 @@ if __name__ == "__main__":
     # html_sample(True)
     # factorial_sample()
     circle_list_sample()
-    # noop_sample(True)
+    # noop_sample()
     # exception_sample()
