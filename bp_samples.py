@@ -1,5 +1,6 @@
 import html5lib
 import os
+import time
 import benchpy as bp
 import pylab as plt
 from io import StringIO
@@ -76,12 +77,17 @@ def html_sample(show_plot=False):
 
 
 def circle_list_sample(show_plot=False):
-    res = bp.run(bp.group("Circle list",
-                          [bp.bench(circle_list, n,
-                                    func_name="{} circles".format(n))
-                           for n in range(100, 1000, 200)],
-                          with_gc=True,
-                          n_samples=10))
+    bench_list = [bp.bench(circle_list, n,
+                           func_name="{} circles".format(n))
+                           for n in range(100, 2001, 100)]
+    res = bp.run([bp.group("Circle list", bench_list,
+                           n_samples=100,
+                           max_batch=100,
+                           n_batches=10),
+                  bp.group("Circle list", bench_list,
+                           n_samples=100,
+                           max_batch=10,
+                           n_batches=10)])
     print(res)
 
     if show_plot:
@@ -89,11 +95,35 @@ def circle_list_sample(show_plot=False):
         plt.show()
 
 
-def noop_sample():
-    res = bp.run([bp.bench(noop)],
-                 n_samples=100,
-                 max_batch=1000,
-                 n_batches=100)
+def noop_sample(show_plot=False):
+    res = bp.run([bp.bench(noop,
+                           run_params=dict(n_samples=100,
+                                           max_batch=100,
+                                           n_batches=10)),
+                  bp.bench(noop,
+                           run_params=dict(n_samples=100,
+                                           max_batch=10,
+                                           n_batches=5))]
+                 )
+    print(res)
+
+    if show_plot:
+        bp.plot_results(res)
+        plt.show()
+
+
+def sleep_sample():
+    sec = 0.01
+    res = bp.run([bp.bench(time.sleep, sec,
+                           run_params=dict(n_samples=20,
+                                           max_batch=20,
+                                           n_batches=4),
+                           func_name="Sleep_[{}]".format(sec))])
+    print(res)
+
+
+def quick_noop_sample():
+    res = bp.run(bp.bench(noop))
     print(res)
 
 
@@ -104,7 +134,9 @@ def exception_sample():
 
 if __name__ == "__main__":
     # html_sample(True)
-    # factorial_sample()
-    circle_list_sample()
+    # factorial_sample(True)
+    # circle_list_sample()
     # noop_sample()
+    # quick_noop_sample()
     # exception_sample()
+    sleep_sample()

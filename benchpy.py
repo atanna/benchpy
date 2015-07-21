@@ -4,7 +4,7 @@ import os
 import timeit
 import numpy as np
 import pylab as plt
-from collections import defaultdict, namedtuple
+from collections import defaultdict, namedtuple, OrderedDict
 from numpy.linalg import LinAlgError
 from prettytable import PrettyTable
 from scipy.linalg import inv
@@ -17,8 +17,13 @@ Bench = namedtuple("Case", 'name f run_params')
 Group = namedtuple("Group", 'name group run_params')
 Regression = namedtuple("Regression", 'X y stat_w stat_y r2')
 
+time_measures = OrderedDict(zip(['s', 'ms', 'micro_s', 'ns'],
+                                [1, 1e3, 1e6, 1e9]))
 
 class BmRes():
+    table_keys = ['Name', 'Time', 'CI', 'Std', 'R2', 'gc_collections',
+                  'with_gc']
+
     def __init__(self, res, gc_info, batch_sizes, with_gc, func_name=""):
         self.res = res
         self.gc_info = gc_info
@@ -27,8 +32,10 @@ class BmRes():
         self.func_name = func_name
         self.n_batches = len(batch_sizes)
         self.n_samples = len(res)
+        self._init_stats()
 
-        self.ci_params = dict(gamma=0.95, type_ci="tquant")
+    def _init_stats(self, gamma=0.95, type_ci="tquant"):
+        self.ci_params = dict(gamma=gamma, type_ci=type_ci)
         self.stat_means = self.evaluate_stats(f_stat=np.mean, **self.ci_params)
         self.means = np.array([stat_mean.val for stat_mean in self.stat_means])
         self.collections = self._get_collections()
@@ -37,11 +44,13 @@ class BmRes():
         try:
             self.regr = self.regression(**self.ci_params)
             self.stat_time = self.regr.stat_y
+            self.r2 = self.regr.r2
         except LinAlgError:
             self.regr = None
             self.stat_time = \
                 Stat(np.mean(self.means[1:] / self.batch_sizes[1:]),
                      None, [None, None])
+            self.r2 = 0
 
     def evaluate_stats(self, f_stat, **kwargs):
         stats = [get_stat(X=batch_sample, f_stat=f_stat, **kwargs)
@@ -85,62 +94,48 @@ class BmRes():
         y = self.means
         return X, y
 
-    def info(self):
-        table = PrettyTable(["Batch's size",
-                             "mean",
-                             "CI_{}[{}]".format(self.ci_params["type_ci"],
-                                                self.ci_params["gamma"]),
-                             "std",
-                             "GC collections"])
+    def get_table(self, measure='s'):
+        w = time_measures[measure]
 
-        for batch, stat_mean, gc_c in \
-                zip(self.batch_sizes, self.stat_means, self.collections):
-            table.add_row([batch,
-                           stat_mean.val, stat_mean.ci, stat_mean.std,
-                           gc_c])
+        table = dict(Name=self.func_name,
+                     Time=self.stat_time.val * w,
+                     CI=self.stat_time.ci * w,
+                     Std=self.stat_time.std * w * w,
+                     R2=self.r2,
+                     gc_collections=self.mean_collections,
+                     with_gc=self.with_gc)
+        return table
 
-        table.align["mean"] = 'l'
-
-        str_ = "{n_samples} samples, {n_batches} batches  # {gc}\n" \
-            .format(func_name=self.func_name,
-                    gc="with_gc" if self.with_gc else "without_gc",
-                    n_samples=self.n_samples,
-                    n_batches=self.n_batches)
-
-        title = "\n{func_name:~^{s}}\n" \
-            .format(func_name=self.func_name, s=len(str_)) \
-            if len(self.func_name) \
-            else "\n"
-        return title + str_ + str(table)
+    def choose_time_measure(self, perm_n_points=2):
+        t = self.stat_time.val
+        c = 10 ^ perm_n_points
+        for measure, w in time_measures.items():
+            if int(t * w * c):
+                return measure
 
     def __repr__(self):
-        table = PrettyTable(["Time",
-                             "CI_{}[{}]".format(self.ci_params["type_ci"],
-                                                self.ci_params["gamma"]),
-                             "std",
-                             "R2",
-                             "GC collections"])
-        n_point = 8
-        table.add_row([np.round(self.stat_time.val, n_point),
-                       np.round(self.stat_time.ci, n_point),
-                       np.round(self.stat_time.std, n_point),
-                       np.round(self.regr.r2, n_point),
-                       np.round(self.mean_collections, 2)])
+        measure = self.choose_time_measure()
+        pretty_table = PrettyTable(list(
+            map(lambda key:
+                "CI_{}[{}]"
+                .format(self.ci_params["type_ci"],
+                        self.ci_params["gamma"]) if key=="CI" else
+                "Time, {}".format(measure) if key=="Time" else key,
+                self.table_keys)))
+        table = self.get_table(measure)
+        pretty_table.add_row([table[key] for key in self.table_keys])
 
-        str_ = "{n_samples} samples, {n_batches} batches  # {gc}\n" \
+        str_ = "\n{n_samples} samples, {n_batches} batches\n" \
             .format(func_name=self.func_name,
-                    gc="with_gc" if self.with_gc else "without_gc",
                     n_samples=self.n_samples,
                     n_batches=self.n_batches)
 
-        title = "\n{func_name:~^{s}}\n" \
-            .format(func_name=self.func_name, s=len(str_)) \
-            if len(self.func_name) \
-            else "\n"
-        return title + str_ + str(table)
+        return str_ + str(pretty_table)
 
 
 class GroupRes():
+    table_keys = BmRes.table_keys
+
     def __init__(self, name, results):
         self.name = name
         self.results = results
@@ -151,23 +146,21 @@ class GroupRes():
         self.n_batches = res.n_batches
 
     def __repr__(self):
-        table = PrettyTable(["func_name",
-                             "Time",
-                             "CI_{}[{}]".format(self.ci_params["type_ci"],
-                                                self.ci_params["gamma"]),
-                             "std",
-                             "R2",
-                             "GC collections",
-                             "with_gc"])
-        n_point = 8
+        "CI_{}[{}]".format(self.ci_params["type_ci"],
+                           self.ci_params["gamma"])
+        pretty_table = PrettyTable(list(
+            map(lambda key:
+                "CI_{}[{}]"
+                .format(self.ci_params["type_ci"],
+                        self.ci_params["gamma"]) if key=="CI" else
+                "Time, {}".format(measure) if key=="Time" else key,
+                self.table_keys)))
+        measure = None
         for bm_res in self.results:
-            table.add_row([bm_res.func_name,
-                           np.round(bm_res.stat_time.val, n_point),
-                           np.round(bm_res.stat_time.ci, n_point),
-                           np.round(bm_res.stat_time.std, n_point),
-                           np.round(bm_res.regr.r2, n_point),
-                           np.round(bm_res.mean_collections, 4),
-                           bm_res.with_gc])
+            if measure is None:
+                measure = bm_res.choose_time_measure()
+            table = bm_res.get_table(measure)
+            pretty_table.add_row([table[key] for key in self.table_keys])
         str_ = "{n_samples} samples, {n_batches} batches \n" \
             .format(func_name=self.name,
                     n_samples=self.n_samples,
@@ -175,7 +168,7 @@ class GroupRes():
 
         title = "\n{group:~^{s}}\n" \
             .format(group=self.name, s=len(str_))
-        return title + str(table)
+        return title + str(pretty_table)
 
 
 class BmException(Exception):
@@ -324,11 +317,13 @@ def group(name, group, **run_params):
 def run(case, *args, **kwargs):
     if isinstance(case, Group):
         return GroupRes(case.name, [run(bench, *args,
-                                            **dict(kwargs, **case.run_params))
+                                        **dict(kwargs, **case.run_params))
                                     for bench in case.group])
     elif isinstance(case, Bench):
-        return _run(case.f, *args, **dict(kwargs, func_name=case.name,
-                                          **case.run_params))
+        params = dict(kwargs)
+        params.update(func_name=case.name)
+        params.update(case.run_params)
+        return _run(case.f, *args, **params)
     elif type(case) == list:
         return [run(_case, *args, **kwargs) for _case in case]
     else:
@@ -354,7 +349,7 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     try:
         _warm_up(f)
     except Exception as e:
-        raise BmException("_warm_up")
+        raise BmException(e)
 
     gc_disable = gc.disable
     if with_gc:
@@ -414,13 +409,9 @@ def _dark_color(color, alpha=0.1):
     return np.array(list(map(lambda x: 0 if x < 0 else x, color - alpha)))
 
 
-def _plot_result(bm_res, fig=None, n_ax=0, label="",
-                c=None,
-                title="",
-                s=240, shift=0., alpha=0.2,
-                text_size=20, linewidth=2,
-                add_text=True
-                ):
+def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
+                 title="", s=240, shift=0., alpha=0.2, text_size=20,
+                 linewidth=2, add_text=True):
     if c is None:
         c = np.array([[0], [0.], [0.75]])
 
@@ -477,16 +468,14 @@ def _plot_group(gr_res, labels=None, **kwargs):
     batch_shift = 0.15 / n_res
     fig = plt.figure()
     fig.add_subplot(111)
-    add_text=True
+    add_text = True
     for i, res, label in zip(range(n_res), list_res, labels):
-        d = dict(fig=fig, label=label,
-                                        title=gr_res.name,
-                                        c=np.random.rand(3, 1),
-                                        add_text=add_text,
-                                        shift=batch_shift * i)
+        d = dict(fig=fig, label=label, title=gr_res.name,
+                 c=np.random.rand(3, 1), add_text=add_text,
+                 shift=batch_shift * i)
         d.update(kwargs)
         fig = _plot_result(res, **d)
-        add_text=False
+        add_text = False
     return fig
 
 
