@@ -17,12 +17,12 @@ Bench = namedtuple("Case", 'name f run_params')
 Group = namedtuple("Group", 'name group run_params')
 Regression = namedtuple("Regression", 'X y stat_w stat_y r2')
 
-time_measures = OrderedDict(zip(['s', 'ms', 'micro_s', 'ns'],
+time_measures = OrderedDict(zip(['s', 'ms', 'microsec', 'ns'],
                                 [1, 1e3, 1e6, 1e9]))
 
-class BmRes():
+class BenchRes():
     table_keys = ['Name', 'Time', 'CI', 'Std', 'R2', 'gc_collections',
-                  'with_gc']
+                  'fit_info']
 
     def __init__(self, res, gc_info, batch_sizes, with_gc, func_name=""):
         self.res = res
@@ -82,9 +82,6 @@ class BmRes():
         stat_y = get_stat(arr_stat=arr_st_y, **kwargs)
         return Regression(X, y, stat_w, stat_y, r2(y, X.dot(stat_w.val)))
 
-    def calculate_outliers(self, arr_r2, threshold=0.9):
-        return np.sum(arr_r2 < threshold) / len(arr_r2)
-
     def get_features(self):
         if len(self.gc_info):
             X = np.array([self.batch_sizes,
@@ -96,14 +93,20 @@ class BmRes():
 
     def get_table(self, measure='s'):
         w = time_measures[measure]
-
+        fit_info = "{with_gc}, {n_samples} samples, {n_batches} batches " \
+                   "[{min_batch}..{max_batch}]"\
+            .format(with_gc="with_gc" if self.with_gc else "without_gc",
+                    n_samples=self.n_samples,
+                    n_batches=self.n_batches,
+                    min_batch=self.batch_sizes[0],
+                    max_batch=self.batch_sizes[-1])
         table = dict(Name=self.func_name,
                      Time=self.stat_time.val * w,
                      CI=self.stat_time.ci * w,
-                     Std=self.stat_time.std * w * w,
+                     Std=self.stat_time.std * w,
                      R2=self.r2,
                      gc_collections=self.mean_collections,
-                     with_gc=self.with_gc)
+                     fit_info=fit_info)
         return table
 
     def choose_time_measure(self, perm_n_points=2):
@@ -113,28 +116,29 @@ class BmRes():
             if int(t * w * c):
                 return measure
 
-    def __repr__(self):
-        measure = self.choose_time_measure()
+    def _get_pretty_table_header(self, measure=None):
+        if measure is None:
+            measure = self.choose_time_measure()
         pretty_table = PrettyTable(list(
             map(lambda key:
                 "CI_{}[{}]"
                 .format(self.ci_params["type_ci"],
-                        self.ci_params["gamma"]) if key=="CI" else
-                "Time, {}".format(measure) if key=="Time" else key,
+                        self.ci_params["gamma"]) if key == "CI" else
+                "Time ({})".format(measure) if key == "Time" else key,
                 self.table_keys)))
+        return pretty_table
+
+    def __repr__(self):
+        measure = self.choose_time_measure()
+        pretty_table = self._get_pretty_table_header(measure)
         table = self.get_table(measure)
         pretty_table.add_row([table[key] for key in self.table_keys])
 
-        str_ = "\n{n_samples} samples, {n_batches} batches\n" \
-            .format(func_name=self.func_name,
-                    n_samples=self.n_samples,
-                    n_batches=self.n_batches)
-
-        return str_ + str(pretty_table)
+        return "\n" + str(pretty_table)
 
 
 class GroupRes():
-    table_keys = BmRes.table_keys
+    table_keys = BenchRes.table_keys
 
     def __init__(self, name, results):
         self.name = name
@@ -146,19 +150,11 @@ class GroupRes():
         self.n_batches = res.n_batches
 
     def __repr__(self):
-        "CI_{}[{}]".format(self.ci_params["type_ci"],
-                           self.ci_params["gamma"])
-        pretty_table = PrettyTable(list(
-            map(lambda key:
-                "CI_{}[{}]"
-                .format(self.ci_params["type_ci"],
-                        self.ci_params["gamma"]) if key=="CI" else
-                "Time, {}".format(measure) if key=="Time" else key,
-                self.table_keys)))
-        measure = None
+        first_res = self.results[0]
+        measure = first_res.choose_time_measure()
+        pretty_table = first_res._get_pretty_table_header(measure)
+        pretty_table.align = 'l'
         for bm_res in self.results:
-            if measure is None:
-                measure = bm_res.choose_time_measure()
             table = bm_res.get_table(measure)
             pretty_table.add_row([table[key] for key in self.table_keys])
         str_ = "{n_samples} samples, {n_batches} batches \n" \
@@ -324,7 +320,7 @@ def run(case, *args, **kwargs):
         params.update(func_name=case.name)
         params.update(case.run_params)
         return _run(case.f, *args, **params)
-    elif type(case) == list:
+    elif isinstance(case, list):
         return [run(_case, *args, **kwargs) for _case in case]
     else:
         raise BmException("Case must be Bench or Group or list")
@@ -339,12 +335,21 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
          func_name="", n_efforts=2):
     """
     :param f: function without arguments
-    :param batch_sizes:
-    :param n_samples:
-    :param with_gc:
+    :param n_samples: number of samples
+    :param max_batch: maximum of batch size
+    :param n_batches: number of batches
+    :param with_gc: {True, False} Garbage Collector
+    :param func_name:
+    :param n_efforts:
     :return:
     """
-    batch_sizes = np.arange(0, int(max_batch), int(max_batch / n_batches))
+    if n_samples < 2 or n_batches < 2:
+        raise BmException("number of samples and number of batches "
+                          "must greater than 1")
+    if max_batch < n_batches:
+        raise BmException("batch sizes can't be equal,"
+                          "so max_batch must be greater than n_batches")
+    batch_sizes = np.arange(0, int(max_batch+1), int(max_batch / n_batches))
 
     try:
         _warm_up(f)
@@ -379,7 +384,7 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
                 gc_info[batch].append(diff)
 
     gc.disable = gc_disable
-    return BmRes(res, gc_info, batch_sizes, with_gc, func_name)
+    return BenchRes(res, gc_info, batch_sizes, with_gc, func_name)
 
 
 def diff_stats(gc_stats0, gc_stats1):
@@ -406,7 +411,7 @@ def diff_equal(diff1, diff2):
 
 
 def _dark_color(color, alpha=0.1):
-    return np.array(list(map(lambda x: 0 if x < 0 else x, color - alpha)))
+    return np.maximum(color - alpha, 0)
 
 
 def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
@@ -480,19 +485,19 @@ def _plot_group(gr_res, labels=None, **kwargs):
 
 
 def plot_results(res, **kwargs):
-    if isinstance(res, BmRes):
+    if isinstance(res, BenchRes):
         return _plot_result(res, **kwargs)
     elif isinstance(res, GroupRes):
         return _plot_group(res, **kwargs)
     elif type(res) == list:
         return [plot_results(_res) for _res in res]
     else:
-        raise BmException("res must be BmRes or GroupRes or list")
+        raise BmException("res must be BenchRes or GroupRes or list")
 
 
 def lin_regression(X, y=None):
     if y is None:
-        _X, y = X[:,:-1], X[:,-1]
+        _X, y = X[:, :-1], X[:, -1]
     else:
         _X = X
     w = inv(_X.T.dot(_X)).dot(_X.T).dot(y)

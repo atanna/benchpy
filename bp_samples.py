@@ -79,7 +79,7 @@ def html_sample(show_plot=False):
 def circle_list_sample(show_plot=False):
     bench_list = [bp.bench(circle_list, n,
                            func_name="{} circles".format(n))
-                           for n in range(100, 2001, 100)]
+                           for n in range(100, 201, 100)]
     res = bp.run([bp.group("Circle list", bench_list,
                            n_samples=100,
                            max_batch=100,
@@ -96,14 +96,15 @@ def circle_list_sample(show_plot=False):
 
 
 def noop_sample(show_plot=False):
-    res = bp.run([bp.bench(noop,
-                           run_params=dict(n_samples=100,
-                                           max_batch=100,
-                                           n_batches=10)),
-                  bp.bench(noop,
-                           run_params=dict(n_samples=100,
-                                           max_batch=10,
-                                           n_batches=5))]
+    res = bp.run(bp.group("noop",
+                          [bp.bench(noop,
+                                    run_params=dict(n_samples=100,
+                                                    max_batch=100,
+                                                    n_batches=10)),
+                           bp.bench(noop,
+                                    run_params=dict(n_samples=100,
+                                                    max_batch=10,
+                                                    n_batches=5))])
                  )
     print(res)
 
@@ -123,7 +124,8 @@ def sleep_sample():
 
 
 def quick_noop_sample():
-    res = bp.run(bp.bench(noop))
+    res = bp.run(bp.bench(noop,
+                          func_name="noop"))
     print(res)
 
 
@@ -134,7 +136,7 @@ def exception_sample():
 
 if __name__ == "__main__":
     # html_sample(True)
-    # factorial_sample(True)
+    # factorial_sample()
     # circle_list_sample()
     # noop_sample()
     # quick_noop_sample()
