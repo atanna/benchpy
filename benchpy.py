@@ -19,12 +19,12 @@ Bench = namedtuple("Case", 'name f run_params')
 Group = namedtuple("Group", 'name group run_params')
 Regression = namedtuple("Regression", 'X y stat_w stat_y r2')
 
-time_measures = OrderedDict(zip(['s', 'ms', 'microsec', 'ns'],
+time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
                                 [1, 1e3, 1e6, 1e9]))
 
 class BenchRes():
-    table_keys = ['Name', 'Time', 'CI', 'Std', 'R2', 'gc_collections',
-                  'fit_info']
+    table_keys = ['Name', 'Time', 'CI', 'Std', 'Min', 'Max', 'R2',
+                  'gc_collections', 'fit_info']
 
     def __init__(self, res, gc_info, batch_sizes, with_gc, func_name=""):
         self.res = res
@@ -40,6 +40,8 @@ class BenchRes():
         self.ci_params = dict(gamma=gamma, type_ci=type_ci)
         self.stat_means = self.evaluate_stats(f_stat=np.mean, **self.ci_params)
         self.means = np.array([stat_mean.val for stat_mean in self.stat_means])
+        self.min_res = np.min(self.res/self.batch_sizes)
+        self.max_res = np.max(self.res/self.batch_sizes)
         self.collections = self._get_collections()
         self.mean_collections = np.mean(self.collections[1:] /
                                 self.batch_sizes[1:])
@@ -106,6 +108,8 @@ class BenchRes():
                      Time=self.stat_time.val * w,
                      CI=self.stat_time.ci * w,
                      Std=self.stat_time.std * w,
+                     Min=self.min_res * w,
+                     Max=self.max_res * w,
                      R2=self.r2,
                      gc_collections=self.mean_collections,
                      fit_info=fit_info)
@@ -153,7 +157,7 @@ class BenchRes():
         return "\n" + str(pretty_table)
 
     def __repr__(self):
-        table_keys = ["Name", "Time", "CI"]
+        table_keys = ["Name", "Time", "CI", "Min", "Max"]
         if self.with_gc:
             table_keys.append("gc_collections")
         return self._repr(table_keys, False)
@@ -386,7 +390,7 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     if max_batch < n_batches:
         raise BmException("batch sizes can't be equal,"
                           "so max_batch must be greater than n_batches")
-    batch_sizes = np.arange(0, int(max_batch+1), int(max_batch / n_batches))
+    batch_sizes = np.arange(1, int(max_batch+1), int(max_batch / n_batches))
 
     try:
         _warm_up(f)
@@ -568,70 +572,49 @@ class ExecutionMagics(Magics):
         Options:
         -i: return full information about benchmark results.
 
-        -g<G>: use information from garbage collector (with_gc=<G>).
+        -g: use information from garbage collector (with_gc=True).
         Default: 'False'.
 
         -m<M>: set maximum of batch size <M> (max_batch=<M>).
         Default: 100.
 
         -n<N>: set number of batches for fitting regression <N> (n_batches=<N>).
-        Default: 10
+        Default: 5.
+        batch_sizes = [1, 1+<M>/<N>, 1+2<M>/<N>, ...]
 
         -p: show plot with regression.
 
         -s<S>: set number of samples for each batch <S> (n_samples=<S>).
-        Default 10.
-
-        Examples
-        --------
-            In[2]: import benchpy
-            Backend TkAgg is interactive backend. Turning interactive mode on.
-            In[3]: def f(n): return range(n)
-            In[4]: %benchpy bench(f, 100)
-            Out[4]:
-
-            +-----------------+---------------------------+
-            | Time (microsec) |      CI_tquant[0.95]      |
-            +-----------------+---------------------------+
-            |  0.441615314386 | [ 0.42037524  0.45261551] |
-            +-----------------+---------------------------+
-            In[5]: %%benchpy \
-            ... group("Range", [bench(f, n, func_name=n) for n in [0, 100, 1000]])
-            Out[5]:
-
-            ~~Range~~~
-            +------+-----------------+---------------------------+----------------+
-            | Name | Time (microsec) | CI_tquant[0.95]           | gc_collections |
-            +------+-----------------+---------------------------+----------------+
-            | 0    | 0.357981034548  | [ 0.34229986  0.36855114] | 0.0            |
-            | 100  | 0.435378331049  | [ 0.41669441  0.4458837 ] | 0.0            |
-            | 1000 | 0.458343141516  | [ 0.4353058   0.47064086] | 0.0            |
-            +------+-----------------+---------------------------+----------------+
+        Default 5.
         """
-        opts, arg_str = self.parse_options(parameter_s, 'ig:m:n:ps:',
+        opts, arg_str = self.parse_options(parameter_s, 'igm:n:ps:',
                                            list_all=True, posix=False)
         glob = dict(self.shell.user_ns)
-        glob.update(globals())
         if cell is not None:
-            arg_str = cell
-        with_gc = opts.get('g', [False])[0]
-        n_samples = opts.get('s', [10])[0]
+            arg_str += '\n' + cell
+            arg_str = self.shell.input_transformer_manager.transform_cell(cell)
+        with_gc = 'g' in opts
+        n_samples = opts.get('s', [5])[0]
         max_batch = opts.get('m', [100])[0]
-        n_batches = opts.get('n', [10])[0]
+        n_batches = opts.get('n', [5])[0]
 
-        res = eval("run({}, "
+        print(arg_str)
+
+        def f():
+            exec(arg_str, glob)
+
+        res = eval("run(bench(f), "
                    "with_gc={with_gc}, "
                    "n_samples={n_samples}, "
                    "max_batch={max_batch}, "
                    "n_batches={n_batches})"
-                   .format(arg_str,
-                           with_gc=with_gc,
+                   .format(with_gc=with_gc,
                            n_samples=n_samples,
                            n_batches=n_batches,
-                           max_batch=max_batch),
-                   glob)
+                           max_batch=max_batch))
         if 'p' in opts:
-            res.show_results()
+            plot_results(res)
+            plt.show()
 
         if 'i' in opts:
             return res._repr()
