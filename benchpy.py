@@ -2,6 +2,8 @@ import functools
 import gc
 import os
 import timeit
+from IPython import get_ipython
+from IPython.core.magic import magics_class, Magics, line_cell_magic
 import numpy as np
 import pylab as plt
 from collections import defaultdict, namedtuple, OrderedDict
@@ -116,7 +118,10 @@ class BenchRes():
             if int(t * w * c):
                 return measure
 
-    def _get_pretty_table_header(self, measure=None):
+    def _get_pretty_table_header(self, measure=None, table_keys=None):
+        if table_keys is None:
+            table_keys = self.table_keys
+
         if measure is None:
             measure = self.choose_time_measure()
         pretty_table = PrettyTable(list(
@@ -125,16 +130,33 @@ class BenchRes():
                 .format(self.ci_params["type_ci"],
                         self.ci_params["gamma"]) if key == "CI" else
                 "Time ({})".format(measure) if key == "Time" else key,
-                self.table_keys)))
+                table_keys)))
         return pretty_table
 
-    def __repr__(self):
+    def _repr(self, table_keys=None, with_empty=True):
         measure = self.choose_time_measure()
-        pretty_table = self._get_pretty_table_header(measure)
+        if table_keys is None:
+            table_keys = self.table_keys
+        _table_keys = []
         table = self.get_table(measure)
-        pretty_table.add_row([table[key] for key in self.table_keys])
+        for key in table_keys:
+            if key not in table:
+                raise BmException("'{}' is unknown key".format(key))
+            if not with_empty and not len(str(table[key])):
+                continue
+            _table_keys.append(key)
+
+        pretty_table = self._get_pretty_table_header(measure, _table_keys)
+
+        pretty_table.add_row([table[key] for key in _table_keys])
 
         return "\n" + str(pretty_table)
+
+    def __repr__(self):
+        table_keys = ["Name", "Time", "CI"]
+        if self.with_gc:
+            table_keys.append("gc_collections")
+        return self._repr(table_keys, False)
 
 
 class GroupRes():
@@ -149,22 +171,37 @@ class GroupRes():
         self.batch_sizes = res.batch_sizes
         self.n_batches = res.n_batches
 
-    def __repr__(self):
+    def _repr(self, table_keys=None, with_empty=True):
+        if table_keys is None:
+            table_keys = self.table_keys
         first_res = self.results[0]
         measure = first_res.choose_time_measure()
-        pretty_table = first_res._get_pretty_table_header(measure)
+        tables = [bm_res.get_table(measure) for bm_res in self.results]
+        n_results = len(self.results)
+        _table_keys = []
+        for key in table_keys:
+            n_empty_values = 0
+            for table in tables:
+                if key not in table:
+                    raise BmException("'{}' is unknown key".format(key))
+                if not len(str(table[key])):
+                    n_empty_values += 1
+            if not with_empty and n_empty_values == n_results:
+                continue
+            _table_keys.append(key)
+
+        pretty_table = first_res._get_pretty_table_header(measure, _table_keys)
         pretty_table.align = 'l'
         for bm_res in self.results:
             table = bm_res.get_table(measure)
-            pretty_table.add_row([table[key] for key in self.table_keys])
-        str_ = "{n_samples} samples, {n_batches} batches \n" \
-            .format(func_name=self.name,
-                    n_samples=self.n_samples,
-                    n_batches=self.n_batches)
-
-        title = "\n{group:~^{s}}\n" \
-            .format(group=self.name, s=len(str_))
+            pretty_table.add_row([table[key] for key in _table_keys])
+        title = "\n{group:~^{n}}\n" \
+            .format(group=self.name, n=10)
         return title + str(pretty_table)
+
+    def __repr__(self):
+        table_keys = ["Name", "Time", "CI", "gc_collections"]
+        return self._repr(table_keys, False)
 
 
 class BmException(Exception):
@@ -512,4 +549,96 @@ def save_plot(fig, func_name="f", path=None, dir="img"):
         path = "{}/{}.jpg".format(dir_, np.random.randint(100))
     fig.savefig(path)
     return path
+
+
+
+@magics_class
+class ExecutionMagics(Magics):
+
+    @line_cell_magic
+    def benchpy(self, parameter_s='', cell=None):
+        """
+        Run benchpy.run
+        %benchpy [[-i] -g<G> -m<M> -n<N> [-p] -s<S>] statement
+        where statement is Bench or Group or list with benches
+        %%benchpy [[-i] -g<G> -m<M> -n<N> [-p] -s<S>]
+          long description of statement
+
+
+        Options:
+        -i: return full information about benchmark results.
+
+        -g<G>: use information from garbage collector (with_gc=<G>).
+        Default: 'False'.
+
+        -m<M>: set maximum of batch size <M> (max_batch=<M>).
+        Default: 100.
+
+        -n<N>: set number of batches for fitting regression <N> (n_batches=<N>).
+        Default: 10
+
+        -p: show plot with regression.
+
+        -s<S>: set number of samples for each batch <S> (n_samples=<S>).
+        Default 10.
+
+        Examples
+        --------
+            In[2]: import benchpy
+            Backend TkAgg is interactive backend. Turning interactive mode on.
+            In[3]: def f(n): return range(n)
+            In[4]: %benchpy bench(f, 100)
+            Out[4]:
+
+            +-----------------+---------------------------+
+            | Time (microsec) |      CI_tquant[0.95]      |
+            +-----------------+---------------------------+
+            |  0.441615314386 | [ 0.42037524  0.45261551] |
+            +-----------------+---------------------------+
+            In[5]: %%benchpy \
+            ... group("Range", [bench(f, n, func_name=n) for n in [0, 100, 1000]])
+            Out[5]:
+
+            ~~Range~~~
+            +------+-----------------+---------------------------+----------------+
+            | Name | Time (microsec) | CI_tquant[0.95]           | gc_collections |
+            +------+-----------------+---------------------------+----------------+
+            | 0    | 0.357981034548  | [ 0.34229986  0.36855114] | 0.0            |
+            | 100  | 0.435378331049  | [ 0.41669441  0.4458837 ] | 0.0            |
+            | 1000 | 0.458343141516  | [ 0.4353058   0.47064086] | 0.0            |
+            +------+-----------------+---------------------------+----------------+
+        """
+        opts, arg_str = self.parse_options(parameter_s, 'ig:m:n:ps:',
+                                           list_all=True, posix=False)
+        glob = dict(self.shell.user_ns)
+        glob.update(globals())
+        if cell is not None:
+            arg_str = cell
+        with_gc = opts.get('g', [False])[0]
+        n_samples = opts.get('s', [10])[0]
+        max_batch = opts.get('m', [100])[0]
+        n_batches = opts.get('n', [10])[0]
+
+        res = eval("run({}, "
+                   "with_gc={with_gc}, "
+                   "n_samples={n_samples}, "
+                   "max_batch={max_batch}, "
+                   "n_batches={n_batches})"
+                   .format(arg_str,
+                           with_gc=with_gc,
+                           n_samples=n_samples,
+                           n_batches=n_batches,
+                           max_batch=max_batch),
+                   glob)
+        if 'p' in opts:
+            res.show_results()
+
+        if 'i' in opts:
+            return res._repr()
+        return res
+
+
+ip = get_ipython()
+if ip is not None:
+    ip.register_magics(ExecutionMagics)
 
