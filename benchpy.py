@@ -1,13 +1,13 @@
 import functools
 import gc
 import os
-import timeit
 from IPython import get_ipython
 from IPython.core.magic import magics_class, Magics, line_cell_magic
 import numpy as np
 import pylab as plt
 from collections import defaultdict, namedtuple, OrderedDict
 from numpy.linalg import LinAlgError
+from my_time import get_time_clock
 from prettytable import PrettyTable
 from scipy.linalg import inv
 from scipy.stats.mstats import mquantiles
@@ -390,7 +390,8 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     if max_batch < n_batches:
         raise BmException("batch sizes can't be equal,"
                           "so max_batch must be greater than n_batches")
-    batch_sizes = np.arange(1, int(max_batch+1), int(max_batch / n_batches))
+    batch_sizes = \
+        np.arange(int(max_batch), 0, -int(max_batch / n_batches))[::-1]
 
     try:
         _warm_up(f)
@@ -398,8 +399,11 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
         raise BmException(e)
 
     gc_disable = gc.disable
+    gcold = gc.isenabled()
     if with_gc:
         gc.disable = lambda: None
+    else:
+        gc.disable()
 
     n_batches = len(batch_sizes)
     res = np.zeros((n_samples, n_batches))
@@ -407,24 +411,26 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
 
     for sample in range(n_samples):
         for i, batch in enumerate(batch_sizes):
-            prev_stats = None
-            for _ in range(n_efforts):
-                try:
-                    gc.collect()
-                    prev_stats = gc.get_stats()
-                    time = timeit.Timer(f).timeit(batch)
-                    res[sample, i] = time
-                    break
-                except Exception as e:
-                    if _ == n_efforts - 1:
-                        raise BmException(e.args)
-            diff, is_diff = diff_stats(prev_stats, gc.get_stats())
-            if with_gc and is_diff and \
+            try:
+                gc.collect()
+                prev_stats = gc.get_stats()
+
+                # time = timeit.Timer(f).timeit(batch)
+                time = get_time_clock(f, batch)
+                diff, is_diff = diff_stats(prev_stats, gc.get_stats())
+                res[sample, i] = time
+
+                if with_gc and is_diff and \
                     (batch not in gc_info or
                          not diff_equal(gc_info[batch][-1], diff)):
-                gc_info[batch].append(diff)
+                    gc_info[batch].append(diff)
+
+            except Exception as e:
+                raise BmException(e.args)
 
     gc.disable = gc_disable
+    if gcold:
+        gc.enable()
     return BenchRes(res, gc_info, batch_sizes, with_gc, func_name)
 
 
@@ -586,8 +592,9 @@ class ExecutionMagics(Magics):
 
         -s<S>: set number of samples for each batch <S> (n_samples=<S>).
         Default 5.
+        -t<T>: set key_table <T> to represent result.
         """
-        opts, arg_str = self.parse_options(parameter_s, 'igm:n:ps:',
+        opts, arg_str = self.parse_options(parameter_s, 'igm:n:ps:t:',
                                            list_all=True, posix=False)
         glob = dict(self.shell.user_ns)
         if cell is not None:
@@ -597,8 +604,6 @@ class ExecutionMagics(Magics):
         n_samples = opts.get('s', [5])[0]
         max_batch = opts.get('m', [100])[0]
         n_batches = opts.get('n', [5])[0]
-
-        print(arg_str)
 
         def f():
             exec(arg_str, glob)
