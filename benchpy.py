@@ -1,4 +1,4 @@
-import functools
+from functools import partial
 import gc
 import os
 from IPython import get_ipython
@@ -140,6 +140,10 @@ class BenchRes():
     def _repr(self, table_keys=None, with_empty=True):
         measure = self.choose_time_measure()
         if table_keys is None:
+            table_keys = ["Name", "Time", "CI"]
+            if self.with_gc:
+                table_keys.append("gc_collections")
+        elif table_keys is "Full":
             table_keys = self.table_keys
         _table_keys = []
         table = self.get_table(measure)
@@ -149,18 +153,13 @@ class BenchRes():
             if not with_empty and not len(str(table[key])):
                 continue
             _table_keys.append(key)
-
         pretty_table = self._get_pretty_table_header(measure, _table_keys)
 
         pretty_table.add_row([table[key] for key in _table_keys])
-
         return "\n" + str(pretty_table)
 
     def __repr__(self):
-        table_keys = ["Name", "Time", "CI", "Min", "Max"]
-        if self.with_gc:
-            table_keys.append("gc_collections")
-        return self._repr(table_keys, False)
+        return self._repr(with_empty=False)
 
 
 class GroupRes():
@@ -177,6 +176,8 @@ class GroupRes():
 
     def _repr(self, table_keys=None, with_empty=True):
         if table_keys is None:
+            table_keys = ["Name", "Time", "CI", "gc_collections"]
+        elif table_keys is "Full":
             table_keys = self.table_keys
         first_res = self.results[0]
         measure = first_res.choose_time_measure()
@@ -204,8 +205,7 @@ class GroupRes():
         return title + str(pretty_table)
 
     def __repr__(self):
-        table_keys = ["Name", "Time", "CI", "gc_collections"]
-        return self._repr(table_keys, False)
+        return self._repr(with_empty=False)
 
 
 class BmException(Exception):
@@ -343,7 +343,7 @@ def bench(f, *args, run_params=None, func_name="", **kwargs):
     if run_params is None:
         run_params = {}
     return Bench(func_name,
-                functools.partial(f, *args, **kwargs),
+                partial(f, *args, **kwargs),
                 run_params)
 
 
@@ -372,8 +372,12 @@ def _warm_up(f, n=2):
         f()
 
 
+def noop(*args, **kwargs):
+    pass
+
+
 def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
-         func_name="", n_efforts=2):
+         func_name=""):
     """
     :param f: function without arguments
     :param n_samples: number of samples
@@ -404,7 +408,7 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
         gc.disable = lambda: None
     else:
         gc.disable()
-
+    noop_time = [get_time_clock(noop, batch) for batch in batch_sizes]
     n_batches = len(batch_sizes)
     res = np.zeros((n_samples, n_batches))
     gc_info = defaultdict(list)
@@ -416,7 +420,8 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
                 prev_stats = gc.get_stats()
 
                 # time = timeit.Timer(f).timeit(batch)
-                time = get_time_clock(f, batch)
+
+                time = get_time_clock(f, batch) - noop_time[i]
                 diff, is_diff = diff_stats(prev_stats, gc.get_stats())
                 res[sample, i] = time
 
@@ -581,29 +586,34 @@ class ExecutionMagics(Magics):
         -g: use information from garbage collector (with_gc=True).
         Default: 'False'.
 
-        -m<M>: set maximum of batch size <M> (max_batch=<M>).
+        -n<N>: set maximum of batch size <N> (max_batch=<N>).
         Default: 100.
 
-        -n<N>: set number of batches for fitting regression <N> (n_batches=<N>).
+        -m<M>: set number of batches for fitting regression <M> (n_batches=<M>).
         Default: 5.
-        batch_sizes = [1, 1+<M>/<N>, 1+2<M>/<N>, ...]
+        batch_sizes = [1, 1+<N>/<M>, 1+2<N>/<M>, ...]
 
         -p: show plot with regression.
 
-        -s<S>: set number of samples for each batch <S> (n_samples=<S>).
+        -r<R>: repeat the loop iteration <R> (n_samples=<R>).
         Default 5.
-        -t<T>: set key_table <T> to represent result.
+
+        -t<T>: choose columns <T> from
+        ['Name', 'Time', 'CI', 'Std', 'Min', 'Max', 'R2',
+        'gc_collections', 'fit_info'] to represent result.
+        Default - default in repr.
         """
-        opts, arg_str = self.parse_options(parameter_s, 'igm:n:ps:t:',
+        opts, arg_str = self.parse_options(parameter_s, 'igm:n:pr:t:',
                                            list_all=True, posix=False)
         glob = dict(self.shell.user_ns)
         if cell is not None:
             arg_str += '\n' + cell
             arg_str = self.shell.input_transformer_manager.transform_cell(cell)
         with_gc = 'g' in opts
-        n_samples = opts.get('s', [5])[0]
-        max_batch = opts.get('m', [100])[0]
-        n_batches = opts.get('n', [5])[0]
+        n_samples = opts.get('r', [5])[0]
+        max_batch = opts.get('n', [100])[0]
+        n_batches = min(int(max_batch), opts.get('m', [5])[0])
+        table_keys = opts.get('t', [None])[0]
 
         def f():
             exec(arg_str, glob)
@@ -622,8 +632,8 @@ class ExecutionMagics(Magics):
             plt.show()
 
         if 'i' in opts:
-            return res._repr()
-        return res
+            return res._repr("Full")
+        print(res._repr(table_keys, with_empty=False))
 
 
 ip = get_ipython()
