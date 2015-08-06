@@ -95,6 +95,25 @@ def circle_list_sample(show_plot=False):
         plt.show()
 
 
+def circle_sample(show_plot=False):
+    n = 100000
+    res = bp.run(bp.group("Circle",
+                          [bp.bench(circle_list, n,
+                                    run_params=dict(with_gc=True),
+                                    func_name="with_gc"),
+                           bp.bench(circle_list, n,
+                                    run_params=dict(with_gc=False),
+                                    func_name="without_gc")],
+                          n_samples=10,
+                          max_batch=100,
+                          n_batches=10))
+    print(res)
+
+    if show_plot:
+        bp.plot_results(res)
+        plt.show()
+
+
 def noop_sample(show_plot=False):
     res = bp.run(bp.group("noop",
                           [bp.bench(noop,
@@ -113,19 +132,22 @@ def noop_sample(show_plot=False):
         plt.show()
 
 
-def sleep_sample():
-    sec = 0.01
+def sleep_sample(sec=0.001):
+
     res = bp.run([bp.bench(time.sleep, sec,
-                           run_params=dict(n_samples=20,
-                                           max_batch=20,
-                                           n_batches=4),
+                           run_params=dict(n_samples=2,
+                                           max_batch=2,
+                                           n_batches=2),
                            func_name="Sleep_[{}]".format(sec))])
     print(res)
 
 
 def quick_noop_sample():
     res = bp.run(bp.bench(noop,
-                          func_name="noop"))
+                          func_name="noop"),
+                 n_samples=2,
+                 max_batch=10,
+                 n_batches=2)
     print(res)
 
 
@@ -135,10 +157,15 @@ def exception_sample():
 
 
 if __name__ == "__main__":
-    # html_sample(True)
+    # html_sample()
     # factorial_sample()
-    # circle_list_sample()
+    # circle_list_sample(True)
+    # circle_sample(show_plot=True)
     # noop_sample()
     # quick_noop_sample()
     # exception_sample()
-    sleep_sample()
+    sleep_sample(1e-9)
+
+
+
+
