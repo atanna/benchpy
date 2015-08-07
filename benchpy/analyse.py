@@ -1,26 +1,21 @@
-from functools import partial
-import gc
-import os
-from IPython import get_ipython
-from IPython.core.magic import magics_class, Magics, line_cell_magic
 import numpy as np
-import pylab as plt
-from collections import defaultdict, namedtuple, OrderedDict
-from numpy.linalg import LinAlgError
-from my_time import get_time_clock
+from collections import namedtuple, OrderedDict
+from numpy.linalg import LinAlgError, inv
 from prettytable import PrettyTable
-from scipy.linalg import inv
 from scipy.stats.mstats import mquantiles
 from scipy.stats import norm
+from . import BmException, GC_NUM_GENERATIONS
 
-GC_NUM_GENERATIONS = 3
 Stat = namedtuple("Stat", 'val std ci')
-Bench = namedtuple("Case", 'name f run_params')
-Group = namedtuple("Group", 'name group run_params')
 Regression = namedtuple("Regression", 'X y stat_w stat_y r2')
 
 time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
                                 [1, 1e3, 1e6, 1e9]))
+
+
+def const_stat(x):
+    return Stat(x, 0., np.array([x, x]))
+
 
 class BenchRes():
     table_keys = ['Name', 'Time', 'CI', 'Std', 'Min', 'Max', 'R2',
@@ -43,8 +38,8 @@ class BenchRes():
         self.min_res = np.min(self.res/self.batch_sizes)
         self.max_res = np.max(self.res/self.batch_sizes)
         self.collections = self._get_collections()
-        self.mean_collections = np.mean(self.collections[1:] /
-                                self.batch_sizes[1:])
+        self.mean_collections = np.mean(self.collections /
+                                self.batch_sizes)
         try:
             self.regr = self.regression(**self.ci_params)
             self.stat_time = self.regr.stat_y
@@ -52,7 +47,7 @@ class BenchRes():
         except LinAlgError:
             self.regr = None
             self.stat_time = \
-                Stat(np.mean(self.means[1:] / self.batch_sizes[1:]),
+                Stat(np.mean(self.means / self.batch_sizes),
                      None, [None, None])
             self.r2 = 0
 
@@ -73,6 +68,10 @@ class BenchRes():
 
     def regression(self, **kwargs):
         X, y = self.get_features()
+        if len(X) == 1:
+            w = lin_regression(X, y)
+            return Regression(X, y, const_stat(w[0]),
+                              const_stat(y[0] / self.batch_sizes[0]), None)
         X_b = bootstrap(np.concatenate((X, y[:, np.newaxis]), axis=1),
                         **kwargs)
         arr_st_w = collect_stat(X_b=X_b, f_stat=lin_regression, **kwargs)
@@ -208,20 +207,21 @@ class GroupRes():
         return self._repr(with_empty=False)
 
 
-class BmException(Exception):
-    pass
-
-
-def _get_mean_se_stat(stat_b, stat=None):
+def _get_mean_se_stat(stat_b, stat=None, eps=1e-9):
     mean_stat = np.mean(stat_b, axis=0)
     if stat is not None:
         mean_stat = 2*stat - mean_stat
     n = len(stat_b)
     se_stat = np.std(stat_b, axis=0) * np.sqrt(n / (n - 1))
+    eps = 1e-9
+    if type(se_stat) is np.ndarray:
+        se_stat[se_stat<eps] = eps
+    else:
+        se_stat = max(se_stat, eps)
     return mean_stat, se_stat
 
 
-def get_stat(type_ci="efr", **kwargs):
+def get_stat(type_ci="efr", X=None, f_stat=None, arr_stat=None, **kwargs):
     """
     :param X:
     :param f_stat:
@@ -230,12 +230,20 @@ def get_stat(type_ci="efr", **kwargs):
     :param kwargs:
     :return:
     """
+    if X is not None and len(X) == 1:
+        m = f_stat(X)
+        return const_stat(m)
+    if arr_stat is not None and len(arr_stat) == 1:
+        return const_stat(arr_stat[0])
     if type_ci == "efr":
-        res = confidence_interval_efr(**kwargs)
+        res = confidence_interval_efr(X=X, f_stat=f_stat, arr_stat=arr_stat,
+                                      **kwargs)
     elif type_ci == "quant":
-        res = confidence_interval_quant(**kwargs)
+        res = confidence_interval_quant(X=X, f_stat=f_stat, arr_stat=arr_stat,
+                                        **kwargs)
     elif type_ci == "tquant":
-        res = confidence_interval_tquant(**kwargs)
+        res = confidence_interval_tquant(X=X, f_stat=f_stat, arr_stat=arr_stat,
+                                         **kwargs)
     else:
         raise BmException("type of confidence interval '{}' is not defined"
                           .format(type_ci))
@@ -243,7 +251,9 @@ def get_stat(type_ci="efr", **kwargs):
 
 
 def r2(y_true, y_pred):
-    return 1 - np.mean((y_true-y_pred)**2) / y_true.std()
+    std = y_true.std()
+    return 1 - np.mean((y_true-y_pred)**2) / std if std \
+        else np.inf * (1 - np.mean((y_true-y_pred)**2))
 
 
 def collect_stat(X=None, f_stat=None, X_b=None, arr_stat=None,
@@ -339,304 +349,13 @@ def bootstrap(X, B=1000, **kwargs):
     return list(map(lambda ind: X[ind], indexes))
 
 
-def bench(f, *args, run_params=None, func_name="", **kwargs):
-    if run_params is None:
-        run_params = {}
-    return Bench(func_name,
-                partial(f, *args, **kwargs),
-                run_params)
-
-
-def group(name, group, **run_params):
-    return Group(name, group, run_params)
-
-
-def run(case, *args, **kwargs):
-    if isinstance(case, Group):
-        return GroupRes(case.name, [run(bench, *args,
-                                        **dict(kwargs, **case.run_params))
-                                    for bench in case.group])
-    elif isinstance(case, Bench):
-        params = dict(kwargs)
-        params.update(func_name=case.name)
-        params.update(case.run_params)
-        return _run(case.f, *args, **params)
-    elif isinstance(case, list):
-        return [run(_case, *args, **kwargs) for _case in case]
-    else:
-        raise BmException("Case must be Bench or Group or list")
-
-
-def _warm_up(f, n=2):
-    for i in range(n):
-        f()
-
-
-def noop(*args, **kwargs):
-    pass
-
-
-def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
-         func_name=""):
-    """
-    :param f: function without arguments
-    :param n_samples: number of samples
-    :param max_batch: maximum of batch size
-    :param n_batches: number of batches
-    :param with_gc: {True, False} Garbage Collector
-    :param func_name:
-    :param n_efforts:
-    :return:
-    """
-    if n_samples < 2 or n_batches < 2:
-        raise BmException("number of samples and number of batches "
-                          "must greater than 1")
-    if max_batch < n_batches:
-        raise BmException("batch sizes can't be equal,"
-                          "so max_batch must be greater than n_batches")
-    batch_sizes = \
-        np.arange(int(max_batch), 0, -int(max_batch / n_batches))[::-1]
-
-    try:
-        _warm_up(f)
-    except Exception as e:
-        raise BmException(e)
-
-    gc_disable = gc.disable
-    gcold = gc.isenabled()
-    if with_gc:
-        gc.disable = lambda: None
-    else:
-        gc.disable()
-    noop_time = [get_time_clock(noop, batch) for batch in batch_sizes]
-    n_batches = len(batch_sizes)
-    res = np.zeros((n_samples, n_batches))
-    gc_info = defaultdict(list)
-
-    for sample in range(n_samples):
-        for i, batch in enumerate(batch_sizes):
-            try:
-                gc.collect()
-                prev_stats = gc.get_stats()
-
-                # time = timeit.Timer(f).timeit(batch)
-
-                time = get_time_clock(f, batch) - noop_time[i]
-                diff, is_diff = diff_stats(prev_stats, gc.get_stats())
-                res[sample, i] = time
-
-                if with_gc and is_diff and \
-                    (batch not in gc_info or
-                         not diff_equal(gc_info[batch][-1], diff)):
-                    gc_info[batch].append(diff)
-
-            except Exception as e:
-                raise BmException(e.args)
-
-    gc.disable = gc_disable
-    if gcold:
-        gc.enable()
-    return BenchRes(res, gc_info, batch_sizes, with_gc, func_name)
-
-
-def diff_stats(gc_stats0, gc_stats1):
-    res = []
-    is_diff = False
-    for st0, st1 in zip(gc_stats0, gc_stats1):
-        res.append({})
-        for key in st0.keys():
-            diff = st1[key] - st0[key]
-            if diff:
-                res[-1][key] = diff
-                is_diff = True
-    return res, is_diff
-
-
-def diff_equal(diff1, diff2):
-    for d1, d2 in zip(diff1, diff2):
-        for key in set().union(d1.keys()).union(d2.keys()):
-            if key not in d1 \
-                    or key not in d2 \
-                    or d1[key] != d2[key]:
-                return False
-    return True
-
-
-def _dark_color(color, alpha=0.1):
-    return np.maximum(color - alpha, 0)
-
-
-def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
-                 title="", s=240, shift=0., alpha=0.2, text_size=20,
-                 linewidth=2, add_text=True):
-    if c is None:
-        c = np.array([[0], [0.], [0.75]])
-
-    if fig is None:
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-    else:
-        ax = fig.axes[n_ax]
-
-    batch_shift = shift * bm_res.batch_sizes[1]
-    batch_sizes_ = bm_res.batch_sizes + batch_shift
-
-    for res_ in bm_res.res:
-        ax.scatter(batch_sizes_, res_, c=c, s=s, alpha=alpha)
-    ax.scatter(0, 0, c=c, label=label)
-    ax.plot(batch_sizes_, bm_res.means,
-            c=c, linewidth=linewidth, label="{}_mean".format(label))
-
-    if bm_res.regr is not None:
-        w = bm_res.regr.stat_w.val
-        ax.plot(batch_sizes_, bm_res.regr.X.dot(w), 'r--', c=_dark_color(c),
-                label="{}_lin_regr, w={}".format(label, w),
-                linewidth=linewidth)
-
-    ymin, ymax = ax.get_ylim()
-    gc_collect = False
-    for n_cs, batch in zip(bm_res.collections, bm_res.batch_sizes):
-        if n_cs:
-            ax.text(batch, ymin + shift * (ymax - ymin), n_cs,
-                    color=tuple(c.flatten()), size=text_size)
-            gc_collect = True
-
-    ax.legend()
-    if add_text:
-        if gc_collect:
-            ax.text(0, ymin, "gc collections:", size=text_size)
-
-        ax.set_xlabel('batch_sizes')
-        ax.set_ylabel('time')
-        ax.grid(True)
-        ax.set_title(title)
-    return fig
-
-
-def _plot_group(gr_res, labels=None, **kwargs):
-    list_res = gr_res.results
-    n_res = len(gr_res.results)
-    if labels is None:
-        labels = list(range(n_res))
-        for i, res in enumerate(list_res):
-            if len(res.func_name):
-                labels[i] = res.func_name
-
-    batch_shift = 0.15 / n_res
-    fig = plt.figure()
-    fig.add_subplot(111)
-    add_text = True
-    for i, res, label in zip(range(n_res), list_res, labels):
-        d = dict(fig=fig, label=label, title=gr_res.name,
-                 c=np.random.rand(3, 1), add_text=add_text,
-                 shift=batch_shift * i)
-        d.update(kwargs)
-        fig = _plot_result(res, **d)
-        add_text = False
-    return fig
-
-
-def plot_results(res, **kwargs):
-    if isinstance(res, BenchRes):
-        return _plot_result(res, **kwargs)
-    elif isinstance(res, GroupRes):
-        return _plot_group(res, **kwargs)
-    elif type(res) == list:
-        return [plot_results(_res) for _res in res]
-    else:
-        raise BmException("res must be BenchRes or GroupRes or list")
-
-
 def lin_regression(X, y=None):
     if y is None:
-        _X, y = X[:, :-1], X[:, -1]
+        _X, _y = X[:, :-1], X[:, -1]
     else:
-        _X = X
-    w = inv(_X.T.dot(_X)).dot(_X.T).dot(y)
+        _X, _y = X, y
+    w = inv(_X.T.dot(_X)).dot(_X.T).dot(_y)
     return w
 
 
-def save_plot(fig, func_name="f", path=None, dir="img"):
-    if path is None:
-        dir_ = "{}/{}/".format(dir, func_name)
-        if not os.path.exists(dir_):
-            os.makedirs(dir_)
-        path = "{}/{}.jpg".format(dir_, np.random.randint(100))
-    fig.savefig(path)
-    return path
-
-
-
-@magics_class
-class ExecutionMagics(Magics):
-
-    @line_cell_magic
-    def benchpy(self, parameter_s='', cell=None):
-        """
-        Run benchpy.run
-        %benchpy [[-i] -g<G> -m<M> -n<N> [-p] -s<S>] statement
-        where statement is Bench or Group or list with benches
-        %%benchpy [[-i] -g<G> -m<M> -n<N> [-p] -s<S>]
-          long description of statement
-
-
-        Options:
-        -i: return full information about benchmark results.
-
-        -g: use information from garbage collector (with_gc=True).
-        Default: 'False'.
-
-        -n<N>: set maximum of batch size <N> (max_batch=<N>).
-        Default: 100.
-
-        -m<M>: set number of batches for fitting regression <M> (n_batches=<M>).
-        Default: 5.
-        batch_sizes = [1, 1+<N>/<M>, 1+2<N>/<M>, ...]
-
-        -p: show plot with regression.
-
-        -r<R>: repeat the loop iteration <R> (n_samples=<R>).
-        Default 5.
-
-        -t<T>: choose columns <T> from
-        ['Name', 'Time', 'CI', 'Std', 'Min', 'Max', 'R2',
-        'gc_collections', 'fit_info'] to represent result.
-        Default - default in repr.
-        """
-        opts, arg_str = self.parse_options(parameter_s, 'igm:n:pr:t:',
-                                           list_all=True, posix=False)
-        glob = dict(self.shell.user_ns)
-        if cell is not None:
-            arg_str += '\n' + cell
-            arg_str = self.shell.input_transformer_manager.transform_cell(cell)
-        with_gc = 'g' in opts
-        n_samples = opts.get('r', [5])[0]
-        max_batch = opts.get('n', [100])[0]
-        n_batches = min(int(max_batch), opts.get('m', [5])[0])
-        table_keys = opts.get('t', [None])[0]
-
-        def f():
-            exec(arg_str, glob)
-
-        res = eval("run(bench(f), "
-                   "with_gc={with_gc}, "
-                   "n_samples={n_samples}, "
-                   "max_batch={max_batch}, "
-                   "n_batches={n_batches})"
-                   .format(with_gc=with_gc,
-                           n_samples=n_samples,
-                           n_batches=n_batches,
-                           max_batch=max_batch))
-        if 'p' in opts:
-            plot_results(res)
-            plt.show()
-
-        if 'i' in opts:
-            return res._repr("Full")
-        print(res._repr(table_keys, with_empty=False))
-
-
-ip = get_ipython()
-if ip is not None:
-    ip.register_magics(ExecutionMagics)
 
