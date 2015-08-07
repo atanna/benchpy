@@ -4,23 +4,23 @@ import pylab as plt
 from collections import OrderedDict
 from IPython import get_ipython
 from IPython.core.magic import magics_class, Magics, line_cell_magic
-from .analyse import BenchRes, GroupRes
+from .analyse import BenchResult, GroupResult
 from .run import run, bench
-from . import BmException
+from . import BenchException
 
 time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
                                 [1, 1e3, 1e6, 1e9]))
 
 
 def plot_results(res, **kwargs):
-    if isinstance(res, BenchRes):
+    if isinstance(res, BenchResult):
         return _plot_result(res, **kwargs)
-    elif isinstance(res, GroupRes):
+    elif isinstance(res, GroupResult):
         return _plot_group(res, **kwargs)
     elif type(res) == list:
         return [plot_results(_res) for _res in res]
     else:
-        raise BmException("res must be BenchRes or GroupRes or list")
+        raise BenchException("res must be BenchRes or GroupRes or list")
 
 
 def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
@@ -205,7 +205,7 @@ class ExecutionMagics(Magics):
         table_labels = opts.get('t', [None])[0]
         if table_labels is not None:
             if len(set(table_labels) - set('ntcsmMrgf')):
-                BmException("Table parameters must be "
+                BenchException("Table parameters must be "
                             "a subset of set 'ntcsmMrgf'")
             table_dict = dict(n='Name', t='Time', c='CI', s='Std',
                               m='Min', M='Max', r='R2',

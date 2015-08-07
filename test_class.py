@@ -1,7 +1,8 @@
 import time
+
 import benchpy as bp
-from benchpy import BmException
-from bp_samples import exception_sample, circle_list_sample
+from benchpy import BenchException
+from examples.bp_samples import exception_sample, circle_list_sample
 
 
 class TestClass:
@@ -10,13 +11,13 @@ class TestClass:
         try:
             exception_sample()
         except Exception as e:
-            assert isinstance(e, BmException)
+            assert isinstance(e, BenchException)
 
         try:
             circle_list_sample()
         except Exception as e:
-            assert isinstance(e, BmException)
-            assert isinstance(e, BmException)
+            assert isinstance(e, BenchException)
+            assert isinstance(e, BenchException)
 
     def test_params(self):
         sec = 0.0001

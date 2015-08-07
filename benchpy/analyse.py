@@ -4,20 +4,19 @@ from numpy.linalg import LinAlgError, inv
 from prettytable import PrettyTable
 from scipy.stats.mstats import mquantiles
 from scipy.stats import norm
-from . import BmException, GC_NUM_GENERATIONS
 
 Stat = namedtuple("Stat", 'val std ci')
 Regression = namedtuple("Regression", 'X y stat_w stat_y r2')
 
 time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
                                 [1, 1e3, 1e6, 1e9]))
-
+GC_NUM_GENERATIONS = 3
 
 def const_stat(x):
     return Stat(x, 0., np.array([x, x]))
 
 
-class BenchRes():
+class BenchResult():
     table_keys = ['Name', 'Time', 'CI', 'Std', 'Min', 'Max', 'R2',
                   'gc_collections', 'fit_info']
 
@@ -47,12 +46,11 @@ class BenchRes():
         except LinAlgError:
             self.regr = None
             self.stat_time = \
-                Stat(np.mean(self.means / self.batch_sizes),
-                     None, [None, None])
+                get_mean_stat(self.means / self.batch_sizes)
             self.r2 = 0
 
     def evaluate_stats(self, f_stat, **kwargs):
-        stats = [get_stat(X=batch_sample, f_stat=f_stat, **kwargs)
+        stats = [get_statistic(values=batch_sample, f_stat=f_stat, **kwargs)
                  for batch_sample in self.res.T]
         return stats
 
@@ -72,17 +70,14 @@ class BenchRes():
             w = lin_regression(X, y)
             return Regression(X, y, const_stat(w[0]),
                               const_stat(y[0] / self.batch_sizes[0]), None)
-        X_b = bootstrap(np.concatenate((X, y[:, np.newaxis]), axis=1),
-                        **kwargs)
-        arr_st_w = collect_stat(X_b=X_b, f_stat=lin_regression, **kwargs)
-        stat_w = get_stat(arr_stat=arr_st_w, **kwargs)
 
-        if arr_st_w.shape[1] > 1:
-            x = np.array([1, self.mean_collections])
-        else:
-            x = np.array([1])
+        stat_w, arr_st_w = \
+            get_statistic(np.concatenate((X, y[:, np.newaxis]), axis=1),
+                          lin_regression,
+                          with_arr_values=True, **kwargs)
+        x = np.mean(X / self.batch_sizes[:, np.newaxis], axis=0)
         arr_st_y = np.array([x.dot(w) for w in arr_st_w])
-        stat_y = get_stat(arr_stat=arr_st_y, **kwargs)
+        stat_y = get_mean_stat(arr_st_y, **kwargs)
         return Regression(X, y, stat_w, stat_y, r2(y, X.dot(stat_w.val)))
 
     def get_features(self):
@@ -148,7 +143,7 @@ class BenchRes():
         table = self.get_table(measure)
         for key in table_keys:
             if key not in table:
-                raise BmException("'{}' is unknown key".format(key))
+                raise BenchException("'{}' is unknown key".format(key))
             if not with_empty and not len(str(table[key])):
                 continue
             _table_keys.append(key)
@@ -161,8 +156,8 @@ class BenchRes():
         return self._repr(with_empty=False)
 
 
-class GroupRes():
-    table_keys = BenchRes.table_keys
+class GroupResult():
+    table_keys = BenchResult.table_keys
 
     def __init__(self, name, results):
         self.name = name
@@ -187,7 +182,7 @@ class GroupRes():
             n_empty_values = 0
             for table in tables:
                 if key not in table:
-                    raise BmException("'{}' is unknown key".format(key))
+                    raise BenchException("'{}' is unknown key".format(key))
                 if not len(str(table[key])):
                     n_empty_values += 1
             if not with_empty and n_empty_values == n_results:
@@ -207,13 +202,18 @@ class GroupRes():
         return self._repr(with_empty=False)
 
 
-def _get_mean_se_stat(stat_b, stat=None, eps=1e-9):
-    mean_stat = np.mean(stat_b, axis=0)
+def mean_and_se(stat_values, stat=None, eps=1e-9):
+    """
+    :param stat_values:
+    :param stat:
+    :param eps:
+    :return: (mean(stat_values), se(stat_values))
+    """
+    mean_stat = np.mean(stat_values, axis=0)
     if stat is not None:
         mean_stat = 2*stat - mean_stat
-    n = len(stat_b)
-    se_stat = np.std(stat_b, axis=0) * np.sqrt(n / (n - 1))
-    eps = 1e-9
+    n = len(stat_values)
+    se_stat = np.std(stat_values, axis=0) * np.sqrt(n / (n - 1))
     if type(se_stat) is np.ndarray:
         se_stat[se_stat<eps] = eps
     else:
@@ -221,33 +221,58 @@ def _get_mean_se_stat(stat_b, stat=None, eps=1e-9):
     return mean_stat, se_stat
 
 
-def get_stat(type_ci="efr", X=None, f_stat=None, arr_stat=None, **kwargs):
+def lin_regression(X, y=None):
+    if y is None:
+        _X, _y = X[:, :-1], X[:, -1]
+    else:
+        _X, _y = X, y
+    w = inv(_X.T.dot(_X)).dot(_X.T).dot(_y)
+    return w
+
+
+def bootstrap(X, B=1000, **kwargs):
+    n = len(X)
+    indexes = np.random.random_integers(0, n - 1, size=(B, n))
+    return list(map(lambda ind: X[ind], indexes))
+
+
+def get_statistic(values, f_stat, with_arr_values=False,
+                  bootstrap_kwargs=None,
+                  **ci_kwargs):
     """
-    :param X:
-    :param f_stat:
-    :param B: bootstrap sample size (to define ci)
-    :param type_ci: type of confidence interval {'efr', 'quant', 'tquant'}
-    :param kwargs:
+    Return class Stat with statistic, std, confidence interval
+    :param values:
+    :param f_stat: f_stat(sample) = statistic on sample
     :return:
     """
-    if X is not None and len(X) == 1:
-        m = f_stat(X)
-        return const_stat(m)
-    if arr_stat is not None and len(arr_stat) == 1:
-        return const_stat(arr_stat[0])
-    if type_ci == "efr":
-        res = confidence_interval_efr(X=X, f_stat=f_stat, arr_stat=arr_stat,
-                                      **kwargs)
-    elif type_ci == "quant":
-        res = confidence_interval_quant(X=X, f_stat=f_stat, arr_stat=arr_stat,
-                                        **kwargs)
-    elif type_ci == "tquant":
-        res = confidence_interval_tquant(X=X, f_stat=f_stat, arr_stat=arr_stat,
-                                         **kwargs)
+    if bootstrap_kwargs is None:
+        bootstrap_kwargs = {}
+    arr_values = bootstrap(values, **bootstrap_kwargs)
+    arr_stat = []
+    for _values in arr_values:
+        try:
+            arr_stat.append(f_stat(_values))
+        except:
+            continue
+    arr_stat = np.array(arr_stat)
+    if with_arr_values:
+        return get_mean_stat(arr_stat, **ci_kwargs), arr_stat
+    return get_mean_stat(arr_stat, **ci_kwargs)
+
+
+def get_mean_stat(values, type_ci="efr", **kwargs):
+    if len(values) == 1:
+        return const_stat(values[0])
+    dict_ci = dict(efr=mean_stat_efr,
+                   quant=mean_stat_quant,
+                   tquant=mean_stat_tquant,
+                   hard_efron=mean_stat_hard_efron,
+                   hard_efron2=mean_stat_hard_efron2)
+    if type_ci in dict_ci:
+        return dict_ci[type_ci](values, **kwargs)
     else:
-        raise BmException("type of confidence interval '{}' is not defined"
+        raise BenchException("unknown type of confidence interval '{}'"
                           .format(type_ci))
-    return res
 
 
 def r2(y_true, y_pred):
@@ -256,49 +281,26 @@ def r2(y_true, y_pred):
         else np.inf * (1 - np.mean((y_true-y_pred)**2))
 
 
-def collect_stat(X=None, f_stat=None, X_b=None, arr_stat=None,
-                 **bootstrap_kwargs):
-    if arr_stat is None:
-        if f_stat is None:
-           raise BmException("f_stat must be defined")
-        if X_b is None and X is None:
-            raise BmException("X or X_b must be defined")
-        if X_b is None:
-            X_b = bootstrap(X, **bootstrap_kwargs)
-        arr_stat = []
-
-        for x_b in X_b:
-            try:
-                arr_stat.append(f_stat(x_b))
-            except Exception:
-                continue
-        arr_stat = np.array(arr_stat)
-    return arr_stat
-
-
-def confidence_interval_efr(gamma=0.95, **kwargs):
+def mean_stat_efr(arr, gamma=0.95):
     alpha = (1 - gamma) / 2
-    stat_b = collect_stat(**kwargs)
-    return Stat(*_get_mean_se_stat(np.array(stat_b)),
-                ci=np.array(mquantiles(stat_b, prob=[alpha, 1 - alpha],
+    return Stat(*mean_and_se(np.array(arr)),
+                ci=np.array(mquantiles(arr, prob=[alpha, 1 - alpha],
                                        axis=0).T))
 
 
-def confidence_interval_quant(gamma=0.95, **kwargs):
+def mean_stat_quant(arr, gamma=0.95):
     alpha = (1 - gamma) / 2
-    stat_b = collect_stat(**kwargs)
-    mean_stat, se_stat = _get_mean_se_stat(stat_b)
-    q = np.array(mquantiles(stat_b - mean_stat,
+    mean_stat, se_stat = mean_and_se(arr)
+    q = np.array(mquantiles(arr - mean_stat,
                             prob=[alpha, 1 - alpha], axis=0))
     return Stat(mean_stat, se_stat,
                 np.array([mean_stat - q[1], mean_stat - q[0]]).T)
 
 
-def confidence_interval_tquant(gamma=0.95, **kwargs):
+def mean_stat_tquant(arr, gamma=0.95):
     alpha = (1 - gamma) / 2
-    stat_b = collect_stat(**kwargs)
-    mean_stat, se_stat = _get_mean_se_stat(stat_b)
-    q = np.array(mquantiles((stat_b - mean_stat) / se_stat,
+    mean_stat, se_stat = mean_and_se(arr)
+    q = np.array(mquantiles((arr - mean_stat) / se_stat,
                             prob=[alpha, 1 - alpha],
                             axis=0))
     return Stat(mean_stat, se_stat,
@@ -311,14 +313,14 @@ def _get_z_alph(a, z_0, alpha):
     return z_0 + (z_0 + _z_alpa) / (1 - a * (z_0 + _z_alpa))
 
 
-def confidence_interval_for_mean(X, gamma=0.95, **bootstrap_kwargs):
+def mean_stat_hard_efron(arr, gamma=0.95, **bootstrap_kwargs):
     alpha = (1 - gamma) / 2
-    mean_x = np.mean(X)
-    a = 1. / 6 * np.sum((X - mean_x) ** 3) / (
-        np.sum((X - mean_x) ** 2) ** (3 / 2))
-    X_b = bootstrap(X, **bootstrap_kwargs)
+    mean_x = np.mean(arr)
+    a = 1. / 6 * np.sum((arr - mean_x) ** 3) / (
+        np.sum((arr - mean_x) ** 2) ** (3 / 2))
+    X_b = bootstrap(arr, **bootstrap_kwargs)
     stat_b = np.array(X_b).mean(axis=1)
-    mean_stat, se_stat = _get_mean_se_stat(stat_b)
+    mean_stat, se_stat = mean_and_se(stat_b)
     stat_b.sort()
     n = len(stat_b)
     z_0 = norm.ppf(stat_b.searchsorted(mean_stat) / n)
@@ -327,35 +329,16 @@ def confidence_interval_for_mean(X, gamma=0.95, **bootstrap_kwargs):
     return Stat(mean_stat, se_stat, ci)
 
 
-def confidence_interval_for_mean2(X, gamma=0.95):
+def mean_stat_hard_efron2(arr, gamma=0.95):
     alpha = (1 - gamma) / 2
-    mean_x = np.mean(X)
-    a = 1. / 6 * np.sum((X - mean_x) ** 3) / (
-        np.sum((X - mean_x) ** 2) ** (3 / 2))
+    mean_x = np.mean(arr)
+    a = 1. / 6 * np.sum((arr - mean_x) ** 3) / (
+        np.sum((arr - mean_x) ** 2) ** (3 / 2))
     _z_alpha = norm.ppf(alpha)
     _z_alpha2 = norm.ppf(1 - alpha)
-    sigma = X.std()
+    sigma = arr.std()
     q1 = sigma * (_z_alpha + a * (2 * _z_alpha ** 2 + 1))
     q2 = sigma * (_z_alpha2 + a * (2 * _z_alpha2 ** 2 + 1))
     return Stat(mean_x, sigma, [mean_x + q1, mean_x + q2])
-
-
-def index_bootstrap(n, size):
-    return np.random.random_integers(0, n - 1, size=(size, n))
-
-
-def bootstrap(X, B=1000, **kwargs):
-    indexes = index_bootstrap(len(X), size=B)
-    return list(map(lambda ind: X[ind], indexes))
-
-
-def lin_regression(X, y=None):
-    if y is None:
-        _X, _y = X[:, :-1], X[:, -1]
-    else:
-        _X, _y = X, y
-    w = inv(_X.T.dot(_X)).dot(_X.T).dot(_y)
-    return w
-
 
 

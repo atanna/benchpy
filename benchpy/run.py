@@ -2,17 +2,23 @@ import gc
 import numpy as np
 from collections import defaultdict, namedtuple
 from functools import partial
-from .analyse import BenchRes, GroupRes
-from . import BmException
-
-try:
-    from .benchtime.my_time import get_time_perf_counter
-except:
-    from my_time import get_time_perf_counter
+from .analyse import BenchResult, GroupResult
+from .benchtime.my_time import get_time_perf_counter
+from . import BenchException
 
 
-Bench = namedtuple("Case", 'name f run_params')
-Group = namedtuple("Group", 'name group run_params')
+_Bench = namedtuple("_Bench", 'name f run_params')
+_Group = namedtuple("_Group", 'name group run_params')
+
+
+class Bench(_Bench):
+    def run(self, **kwargs):
+        return run(self, **kwargs)
+
+
+class Group(_Group):
+    def run(self, **kwargs):
+        return run(self, **kwargs)
 
 
 def bench(f, *args, run_params=None, func_name="", **kwargs):
@@ -29,7 +35,7 @@ def group(name, group, **run_params):
 
 def run(case, *args, **kwargs):
     if isinstance(case, Group):
-        return GroupRes(case.name, [run(bench, *args,
+        return GroupResult(case.name, [run(bench, *args,
                                         **dict(kwargs, **case.run_params))
                                     for bench in case.group])
     elif isinstance(case, Bench):
@@ -40,7 +46,7 @@ def run(case, *args, **kwargs):
     elif isinstance(case, list):
         return [run(_case, *args, **kwargs) for _case in case]
     else:
-        raise BmException("Case must be Bench or Group or list")
+        raise BenchException("Case must be Bench or Group or list")
 
 
 def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
@@ -52,7 +58,6 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     :param n_batches: number of batches
     :param with_gc: {True, False} Garbage Collector
     :param func_name:
-    :param n_efforts:
     :return:
     """
     # if n_samples < 2 or n_batches < 2:
@@ -67,7 +72,7 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     try:
         _warm_up(f)
     except Exception as e:
-        raise BmException(e)
+        raise BenchException(e)
 
     gc_disable = gc.disable
     gcold = gc.isenabled()
@@ -85,7 +90,7 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
             try:
                 gc.collect()
                 prev_stats = gc.get_stats()
-                time = get_time_perf_counter(f, batch) - noop_time[i]
+                time = max(get_time_perf_counter(f, batch) - noop_time[i], 0.)
                 diff, is_diff = _diff_stats(prev_stats, gc.get_stats())
                 res[sample, i] = time
 
@@ -95,12 +100,12 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
                     gc_info[batch].append(diff)
 
             except Exception as e:
-                raise BmException(e.args)
+                raise BenchException(e.args)
 
     gc.disable = gc_disable
     if gcold:
         gc.enable()
-    return BenchRes(res, gc_info, batch_sizes, with_gc, func_name)
+    return BenchResult(res, gc_info, batch_sizes, with_gc, func_name)
 
 
 def _warm_up(f, n=2):

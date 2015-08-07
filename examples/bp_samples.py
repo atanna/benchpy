@@ -158,13 +158,13 @@ def exception_sample():
 
 if __name__ == "__main__":
     # html_sample()
-    # factorial_sample()
+    factorial_sample()
     # circle_list_sample(True)
     # circle_sample(show_plot=True)
     # noop_sample()
     # quick_noop_sample()
     # exception_sample()
-    sleep_sample(1e-9)
+    # sleep_sample(1e-1)
 
 
 
