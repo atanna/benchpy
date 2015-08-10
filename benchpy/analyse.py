@@ -1,4 +1,5 @@
 import functools
+from cached_property import cached_property
 import numpy as np
 from collections import namedtuple, OrderedDict
 from numpy.linalg import LinAlgError, inv
@@ -11,20 +12,18 @@ Regression = namedtuple("Regression", 'X y stat_w stat_y r2')
 
 time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
                                 [1, 1e3, 1e6, 1e9]))
-GC_NUM_GENERATIONS = 3
 
 
 def const_stat(x):
     return Stat(x, 0., np.array([x, x]))
 
 
-class StatMixin():
-    def __init__(self, res, gc_info, batch_sizes, with_gc, func_name="",
-                 gamma=0.95, type_ci="tquant"):
+class StatMixin(object):
+    def __init__(self, res, gc_collections, batch_sizes,
+                 func_name="", gamma=0.95, type_ci="tquant"):
         self.res = res
-        self.gc_info = gc_info
+        self.collections = gc_collections
         self.batch_sizes = batch_sizes
-        self._with_gc = with_gc
         self.func_name = func_name
         self.n_batches = len(batch_sizes)
         self.n_samples = len(res)
@@ -39,8 +38,7 @@ class StatMixin():
     def name(self):
         return self.func_name
 
-    @property
-    @functools.lru_cache()
+    @cached_property
     def time(self):
         try:
             self.regr = self.regression(**self._ci_params)
@@ -65,14 +63,12 @@ class StatMixin():
             self.time()
         return self.stat_time.std
 
-    @property
-    @functools.lru_cache()
+    @cached_property
     def min(self):
         self.min_res = np.min(self.res / self.batch_sizes)
         return self.min_res
 
-    @property
-    @functools.lru_cache()
+    @cached_property
     def max(self):
         self.max_res = np.max(self.res / self.batch_sizes)
         return self.max_res
@@ -83,31 +79,29 @@ class StatMixin():
             self.time()
         return self._r2
 
-    @property
-    @functools.lru_cache()
+    @cached_property
     def gc_collections(self):
-        self.collections = self._get_collections()
+        if self.collections is None:
+            return 0.
         self.mean_collections = np.mean(self.collections /
                                             self.batch_sizes)
         return self.mean_collections
 
     @property
     def with_gc(self):
-        return self._with_gc
+        return self.gc_collections is not None
 
     @property
     def ci_params(self):
         return self._ci_params
 
-    @property
-    @functools.lru_cache()
+    @cached_property
     def fit_info(self):
-        return dict(with_gc=self._with_gc,
+        return dict(with_gc=self.with_gc,
                     samples=self.n_samples,
                     batches=self.batch_sizes)
 
-    @property
-    @functools.lru_cache()
+    @cached_property
     def means(self):
         self.stat_means = self.evaluate_stats(f_stat=np.mean,
                                               **self._ci_params)
@@ -119,16 +113,6 @@ class StatMixin():
         stats = [get_statistic(values=batch_sample, f_stat=f_stat, **kwargs)
                  for batch_sample in self.res.T]
         return stats
-
-    def _get_collections(self):
-        res = []
-        for batch in self.batch_sizes:
-            _res = 0
-            for i in range(GC_NUM_GENERATIONS):
-                if batch in self.gc_info:
-                    _res += self.gc_info[batch][0][i].get("collections", 0)
-            res.append(_res)
-        return np.array(res)
 
     def regression(self, **kwargs):
         X, y = self.get_features()
@@ -147,7 +131,8 @@ class StatMixin():
         return Regression(X, y, stat_w, stat_y, r2(y, X.dot(stat_w.val)))
 
     def get_features(self):
-        if len(self.gc_info):
+        if self.collections is not None\
+                and self.collections.sum() > 0:
             X = np.array([self.batch_sizes,
                           self.collections]).T
         else:

@@ -7,6 +7,8 @@ from .benchtime.my_time import get_time_perf_counter
 from .display import VisualMixin, VisualMixinGroup
 from .exception import BenchException
 
+GC_NUM_GENERATIONS = 3
+
 _Bench = namedtuple("_Bench", 'name f run_params')
 _Group = namedtuple("_Group", 'name group run_params')
 
@@ -124,7 +126,21 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     gc.disable = gc_disable
     if gcold:
         gc.enable()
-    return BenchResult(res, gc_info, batch_sizes, with_gc, func_name)
+    return BenchResult(res, _get_collections(gc_info, batch_sizes),
+                       batch_sizes, func_name)
+
+
+def _get_collections(gc_info, batch_sizes):
+    if not len(gc_info):
+        return None
+    res = []
+    for batch in batch_sizes:
+        _res = 0
+        for i in range(GC_NUM_GENERATIONS):
+            if batch in gc_info:
+                _res += gc_info[batch][0][i].get("collections", 0)
+        res.append(_res)
+    return np.array(res)
 
 
 def _warm_up(f, n=2):

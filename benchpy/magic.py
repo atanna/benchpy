@@ -102,7 +102,7 @@ class ExecutionMagics(Magics):
         table_labels = opts.get('t', [None])[0]
         if table_labels is not None:
             if len(set(table_labels) - set('ntcsmMrgf')):
-                BenchException("Table parameters must be "
+                raise BenchException("Table parameters must be "
                                "a subset of set 'ntcsmMrgf'")
             table_dict = dict(n='Name', t='Time', c='CI', s='Std',
                               m='Min', M='Max', r='R2',

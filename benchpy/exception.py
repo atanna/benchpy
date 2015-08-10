@@ -1,2 +1,3 @@
+
 class BenchException(Exception):
     pass

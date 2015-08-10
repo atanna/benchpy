@@ -9,7 +9,7 @@ time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
                                 [1, 1e3, 1e6, 1e9]))
 
 
-class VisualMixin():
+class VisualMixin(object):
     """
     Used only with StatMixin.
     """
@@ -46,9 +46,9 @@ class VisualMixin():
                      fit_info=fit_info)
         return table
 
-    def choose_time_measure(self, perm_n_points=2):
+    def choose_time_measure(self, perm_n_points=0):
         t = self.time
-        c = 10 ^ perm_n_points
+        c = 10 ** perm_n_points
         for measure, w in time_measures.items():
             if int(t * w * c):
                 return measure
@@ -84,11 +84,11 @@ class VisualMixin():
             table_keys = ["Name", "Time", "CI"]
             if self.with_gc:
                 table_keys.append("gc_collections")
-        elif table_keys is "Full":
+        elif table_keys == "Full":
             table_keys = self.table_keys
         elif isinstance(table_keys, str):
             if len(set(table_keys) - set('ntcsmMrgf')):
-                BenchException("Table parameters must be "
+                raise BenchException("Table parameters must be "
                                "a subset of set 'ntcsmMrgf'")
             table_dict = dict(n='Name', t='Time', c='CI', s='Std',
                               m='Min', M='Max', r='R2',
@@ -111,7 +111,7 @@ class VisualMixin():
         return self._repr(with_empty=False)
 
 
-class VisualMixinGroup():
+class VisualMixinGroup(object):
     table_keys = VisualMixin.table_keys
 
     @property
@@ -200,11 +200,12 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
 
     ymin, ymax = ax.get_ylim()
     gc_collect = False
-    for n_cs, batch in zip(bm_res.collections, bm_res.batch_sizes):
-        if n_cs:
-            ax.text(batch, ymin + shift * (ymax - ymin), n_cs,
-                    color=tuple(c.flatten()), size=text_size)
-            gc_collect = True
+    if bm_res.collections is not None:
+        for n_cs, batch in zip(bm_res.collections, bm_res.batch_sizes):
+            if n_cs:
+                ax.text(batch, ymin + shift * (ymax - ymin), n_cs,
+                        color=tuple(c.flatten()), size=text_size)
+                gc_collect = True
 
     ax.legend()
     if add_text:
