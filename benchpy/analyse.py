@@ -1,9 +1,10 @@
+import functools
 import numpy as np
 from collections import namedtuple, OrderedDict
 from numpy.linalg import LinAlgError, inv
-from prettytable import PrettyTable
 from scipy.stats.mstats import mquantiles
 from scipy.stats import norm
+from .exception import BenchException
 
 Stat = namedtuple("Stat", 'val std ci')
 Regression = namedtuple("Regression", 'X y stat_w stat_y r2')
@@ -12,42 +13,107 @@ time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
                                 [1, 1e3, 1e6, 1e9]))
 GC_NUM_GENERATIONS = 3
 
+
 def const_stat(x):
     return Stat(x, 0., np.array([x, x]))
 
 
-class BenchResult():
-    table_keys = ['Name', 'Time', 'CI', 'Std', 'Min', 'Max', 'R2',
-                  'gc_collections', 'fit_info']
-
-    def __init__(self, res, gc_info, batch_sizes, with_gc, func_name=""):
+class StatMixin():
+    def __init__(self, res, gc_info, batch_sizes, with_gc, func_name="",
+                 gamma=0.95, type_ci="tquant"):
         self.res = res
         self.gc_info = gc_info
         self.batch_sizes = batch_sizes
-        self.with_gc = with_gc
+        self._with_gc = with_gc
         self.func_name = func_name
         self.n_batches = len(batch_sizes)
         self.n_samples = len(res)
-        self._init_stats()
+        self._init(gamma, type_ci)
 
-    def _init_stats(self, gamma=0.95, type_ci="tquant"):
-        self.ci_params = dict(gamma=gamma, type_ci=type_ci)
-        self.stat_means = self.evaluate_stats(f_stat=np.mean, **self.ci_params)
-        self.means = np.array([stat_mean.val for stat_mean in self.stat_means])
-        self.min_res = np.min(self.res/self.batch_sizes)
-        self.max_res = np.max(self.res/self.batch_sizes)
-        self.collections = self._get_collections()
-        self.mean_collections = np.mean(self.collections /
-                                self.batch_sizes)
+    def _init(self, gamma=0.95, type_ci="tquant"):
+        self.stat_time = None
+        self._r2 = None
+        self._ci_params = dict(gamma=gamma, type_ci=type_ci)
+
+    @property
+    def name(self):
+        return self.func_name
+
+    @property
+    @functools.lru_cache()
+    def time(self):
         try:
-            self.regr = self.regression(**self.ci_params)
+            self.regr = self.regression(**self._ci_params)
             self.stat_time = self.regr.stat_y
-            self.r2 = self.regr.r2
+            self._r2 = self.regr.r2
         except LinAlgError:
             self.regr = None
             self.stat_time = \
-                get_mean_stat(self.means / self.batch_sizes)
-            self.r2 = 0
+                get_mean_stat(self._means / self.batch_sizes)
+            self._r2 = 0
+        return self.stat_time.val
+
+    @property
+    def ci(self):
+        if self.stat_time is None:
+            self.time()
+        return self.stat_time.ci
+
+    @property
+    def std(self):
+        if self.stat_time is None:
+            self.time()
+        return self.stat_time.std
+
+    @property
+    @functools.lru_cache()
+    def min(self):
+        self.min_res = np.min(self.res / self.batch_sizes)
+        return self.min_res
+
+    @property
+    @functools.lru_cache()
+    def max(self):
+        self.max_res = np.max(self.res / self.batch_sizes)
+        return self.max_res
+
+    @property
+    def r2(self):
+        if self._r2 is None:
+            self.time()
+        return self._r2
+
+    @property
+    @functools.lru_cache()
+    def gc_collections(self):
+        self.collections = self._get_collections()
+        self.mean_collections = np.mean(self.collections /
+                                            self.batch_sizes)
+        return self.mean_collections
+
+    @property
+    def with_gc(self):
+        return self._with_gc
+
+    @property
+    def ci_params(self):
+        return self._ci_params
+
+    @property
+    @functools.lru_cache()
+    def fit_info(self):
+        return dict(with_gc=self._with_gc,
+                    samples=self.n_samples,
+                    batches=self.batch_sizes)
+
+    @property
+    @functools.lru_cache()
+    def means(self):
+        self.stat_means = self.evaluate_stats(f_stat=np.mean,
+                                              **self._ci_params)
+        self._means = np.array([stat_mean.val
+                                for stat_mean in self.stat_means])
+        return self._means
 
     def evaluate_stats(self, f_stat, **kwargs):
         stats = [get_statistic(values=batch_sample, f_stat=f_stat, **kwargs)
@@ -89,118 +155,6 @@ class BenchResult():
         y = self.means
         return X, y
 
-    def get_table(self, measure='s'):
-        w = time_measures[measure]
-        fit_info = "{with_gc}, {n_samples} samples, {n_batches} batches " \
-                   "[{min_batch}..{max_batch}]"\
-            .format(with_gc="with_gc" if self.with_gc else "without_gc",
-                    n_samples=self.n_samples,
-                    n_batches=self.n_batches,
-                    min_batch=self.batch_sizes[0],
-                    max_batch=self.batch_sizes[-1])
-        table = dict(Name=self.func_name,
-                     Time=self.stat_time.val * w,
-                     CI=self.stat_time.ci * w,
-                     Std=self.stat_time.std * w,
-                     Min=self.min_res * w,
-                     Max=self.max_res * w,
-                     R2=self.r2,
-                     gc_collections=self.mean_collections,
-                     fit_info=fit_info)
-        return table
-
-    def choose_time_measure(self, perm_n_points=2):
-        t = self.stat_time.val
-        c = 10 ^ perm_n_points
-        for measure, w in time_measures.items():
-            if int(t * w * c):
-                return measure
-
-    def _get_pretty_table_header(self, measure=None, table_keys=None):
-        if table_keys is None:
-            table_keys = self.table_keys
-
-        if measure is None:
-            measure = self.choose_time_measure()
-        pretty_table = PrettyTable(list(
-            map(lambda key:
-                "CI_{}[{}]"
-                .format(self.ci_params["type_ci"],
-                        self.ci_params["gamma"]) if key == "CI" else
-                "Time ({})".format(measure) if key == "Time" else key,
-                table_keys)))
-        return pretty_table
-
-    def _repr(self, table_keys=None, with_empty=True):
-        measure = self.choose_time_measure()
-        if table_keys is None:
-            table_keys = ["Name", "Time", "CI"]
-            if self.with_gc:
-                table_keys.append("gc_collections")
-        elif table_keys is "Full":
-            table_keys = self.table_keys
-        _table_keys = []
-        table = self.get_table(measure)
-        for key in table_keys:
-            if key not in table:
-                raise BenchException("'{}' is unknown key".format(key))
-            if not with_empty and not len(str(table[key])):
-                continue
-            _table_keys.append(key)
-        pretty_table = self._get_pretty_table_header(measure, _table_keys)
-
-        pretty_table.add_row([table[key] for key in _table_keys])
-        return "\n" + str(pretty_table)
-
-    def __repr__(self):
-        return self._repr(with_empty=False)
-
-
-class GroupResult():
-    table_keys = BenchResult.table_keys
-
-    def __init__(self, name, results):
-        self.name = name
-        self.results = results
-        res = results[0]
-        self.ci_params = res.ci_params
-        self.n_samples = res.n_samples
-        self.batch_sizes = res.batch_sizes
-        self.n_batches = res.n_batches
-
-    def _repr(self, table_keys=None, with_empty=True):
-        if table_keys is None:
-            table_keys = ["Name", "Time", "CI", "gc_collections"]
-        elif table_keys is "Full":
-            table_keys = self.table_keys
-        first_res = self.results[0]
-        measure = first_res.choose_time_measure()
-        tables = [bm_res.get_table(measure) for bm_res in self.results]
-        n_results = len(self.results)
-        _table_keys = []
-        for key in table_keys:
-            n_empty_values = 0
-            for table in tables:
-                if key not in table:
-                    raise BenchException("'{}' is unknown key".format(key))
-                if not len(str(table[key])):
-                    n_empty_values += 1
-            if not with_empty and n_empty_values == n_results:
-                continue
-            _table_keys.append(key)
-
-        pretty_table = first_res._get_pretty_table_header(measure, _table_keys)
-        pretty_table.align = 'l'
-        for bm_res in self.results:
-            table = bm_res.get_table(measure)
-            pretty_table.add_row([table[key] for key in _table_keys])
-        title = "\n{group:~^{n}}\n" \
-            .format(group=self.name, n=10)
-        return title + str(pretty_table)
-
-    def __repr__(self):
-        return self._repr(with_empty=False)
-
 
 def mean_and_se(stat_values, stat=None, eps=1e-9):
     """
@@ -211,11 +165,11 @@ def mean_and_se(stat_values, stat=None, eps=1e-9):
     """
     mean_stat = np.mean(stat_values, axis=0)
     if stat is not None:
-        mean_stat = 2*stat - mean_stat
+        mean_stat = 2 * stat - mean_stat
     n = len(stat_values)
-    se_stat = np.std(stat_values, axis=0) * np.sqrt(n / (n - 1))
+    se_stat = np.std(stat_values, axis=0) * np.sqrt(n / (n-1))
     if type(se_stat) is np.ndarray:
-        se_stat[se_stat<eps] = eps
+        se_stat[se_stat < eps] = eps
     else:
         se_stat = max(se_stat, eps)
     return mean_stat, se_stat
@@ -232,7 +186,7 @@ def lin_regression(X, y=None):
 
 def bootstrap(X, B=1000, **kwargs):
     n = len(X)
-    indexes = np.random.random_integers(0, n - 1, size=(B, n))
+    indexes = np.random.random_integers(0, n-1, size=(B, n))
     return list(map(lambda ind: X[ind], indexes))
 
 
@@ -272,7 +226,7 @@ def get_mean_stat(values, type_ci="efr", **kwargs):
         return dict_ci[type_ci](values, **kwargs)
     else:
         raise BenchException("unknown type of confidence interval '{}'"
-                          .format(type_ci))
+                             .format(type_ci))
 
 
 def r2(y_true, y_pred):
@@ -282,26 +236,26 @@ def r2(y_true, y_pred):
 
 
 def mean_stat_efr(arr, gamma=0.95):
-    alpha = (1 - gamma) / 2
+    alpha = (1-gamma) / 2
     return Stat(*mean_and_se(np.array(arr)),
-                ci=np.array(mquantiles(arr, prob=[alpha, 1 - alpha],
+                ci=np.array(mquantiles(arr, prob=[alpha, 1-alpha],
                                        axis=0).T))
 
 
 def mean_stat_quant(arr, gamma=0.95):
-    alpha = (1 - gamma) / 2
+    alpha = (1-gamma) / 2
     mean_stat, se_stat = mean_and_se(arr)
-    q = np.array(mquantiles(arr - mean_stat,
-                            prob=[alpha, 1 - alpha], axis=0))
+    q = np.array(mquantiles(arr-mean_stat,
+                            prob=[alpha, 1-alpha], axis=0))
     return Stat(mean_stat, se_stat,
-                np.array([mean_stat - q[1], mean_stat - q[0]]).T)
+                np.array([mean_stat-q[1], mean_stat-q[0]]).T)
 
 
 def mean_stat_tquant(arr, gamma=0.95):
-    alpha = (1 - gamma) / 2
+    alpha = (1-gamma) / 2
     mean_stat, se_stat = mean_and_se(arr)
-    q = np.array(mquantiles((arr - mean_stat) / se_stat,
-                            prob=[alpha, 1 - alpha],
+    q = np.array(mquantiles((arr-mean_stat) / se_stat,
+                            prob=[alpha, 1-alpha],
                             axis=0))
     return Stat(mean_stat, se_stat,
                 np.array([mean_stat - se_stat * q[1],
@@ -314,10 +268,10 @@ def _get_z_alph(a, z_0, alpha):
 
 
 def mean_stat_hard_efron(arr, gamma=0.95, **bootstrap_kwargs):
-    alpha = (1 - gamma) / 2
+    alpha = (1-gamma) / 2
     mean_x = np.mean(arr)
-    a = 1. / 6 * np.sum((arr - mean_x) ** 3) / (
-        np.sum((arr - mean_x) ** 2) ** (3 / 2))
+    a = 1./6 * np.sum((arr-mean_x) ** 3) / \
+        (np.sum((arr-mean_x)**2) ** (3/2))
     X_b = bootstrap(arr, **bootstrap_kwargs)
     stat_b = np.array(X_b).mean(axis=1)
     mean_stat, se_stat = mean_and_se(stat_b)
@@ -325,20 +279,18 @@ def mean_stat_hard_efron(arr, gamma=0.95, **bootstrap_kwargs):
     n = len(stat_b)
     z_0 = norm.ppf(stat_b.searchsorted(mean_stat) / n)
     ci = mquantiles(stat_b, prob=[norm.cdf(_get_z_alph(a, z_0, alpha)),
-                                  norm.cdf(_get_z_alph(a, z_0, 1 - alpha))])
+                                  norm.cdf(_get_z_alph(a, z_0, 1-alpha))])
     return Stat(mean_stat, se_stat, ci)
 
 
 def mean_stat_hard_efron2(arr, gamma=0.95):
-    alpha = (1 - gamma) / 2
+    alpha = (1-gamma) / 2
     mean_x = np.mean(arr)
-    a = 1. / 6 * np.sum((arr - mean_x) ** 3) / (
-        np.sum((arr - mean_x) ** 2) ** (3 / 2))
+    a = 1./6 * np.sum((arr-mean_x) ** 3) / (
+        np.sum((arr-mean_x)**2) ** (3 / 2))
     _z_alpha = norm.ppf(alpha)
     _z_alpha2 = norm.ppf(1 - alpha)
     sigma = arr.std()
-    q1 = sigma * (_z_alpha + a * (2 * _z_alpha ** 2 + 1))
-    q2 = sigma * (_z_alpha2 + a * (2 * _z_alpha2 ** 2 + 1))
-    return Stat(mean_x, sigma, [mean_x + q1, mean_x + q2])
-
-
+    q1 = sigma * (_z_alpha + a*(2*_z_alpha**2 + 1))
+    q2 = sigma * (_z_alpha2 + a*(2*_z_alpha2**2 + 1))
+    return Stat(mean_x, sigma, [mean_x+q1, mean_x+q2])

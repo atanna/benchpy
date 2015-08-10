@@ -2,10 +2,10 @@ import gc
 import numpy as np
 from collections import defaultdict, namedtuple
 from functools import partial
-from .analyse import BenchResult, GroupResult
+from .analyse import StatMixin
 from .benchtime.my_time import get_time_perf_counter
-from . import BenchException
-
+from .display import VisualMixin, VisualMixinGroup
+from .exception import BenchException
 
 _Bench = namedtuple("_Bench", 'name f run_params')
 _Group = namedtuple("_Group", 'name group run_params')
@@ -21,12 +21,34 @@ class Group(_Group):
         return run(self, **kwargs)
 
 
+class BenchResult(StatMixin, VisualMixin):
+    pass
+
+
+class GroupResult(VisualMixinGroup):
+    def __init__(self, name, results):
+        self._name = name
+        self.results = results
+        res = results[0]
+        self.n_samples = res.n_samples
+        self.batch_sizes = res.batch_sizes
+        self.n_batches = res.n_batches
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def bench_results(self):
+        return self.results
+
+
 def bench(f, *args, run_params=None, func_name="", **kwargs):
     if run_params is None:
         run_params = {}
     return Bench(func_name,
-                partial(f, *args, **kwargs),
-                run_params)
+                 partial(f, *args, **kwargs),
+                 run_params)
 
 
 def group(name, group, **run_params):
@@ -36,8 +58,8 @@ def group(name, group, **run_params):
 def run(case, *args, **kwargs):
     if isinstance(case, Group):
         return GroupResult(case.name, [run(bench, *args,
-                                        **dict(kwargs, **case.run_params))
-                                    for bench in case.group])
+                                           **dict(kwargs, **case.run_params))
+                                       for bench in case.group])
     elif isinstance(case, Bench):
         params = dict(kwargs)
         params.update(func_name=case.name)
@@ -60,9 +82,6 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     :param func_name:
     :return:
     """
-    # if n_samples < 2 or n_batches < 2:
-    #     raise BmException("number of samples and number of batches "
-    #                       "must greater than 1")
 
     n_batches = min(max_batch, n_batches)
 
@@ -95,8 +114,8 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
                 res[sample, i] = time
 
                 if with_gc and is_diff and \
-                    (batch not in gc_info or
-                         not _diff_equal(gc_info[batch][-1], diff)):
+                        (batch not in gc_info or
+                             not _diff_equal(gc_info[batch][-1], diff)):
                     gc_info[batch].append(diff)
 
             except Exception as e:

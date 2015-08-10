@@ -2,23 +2,171 @@ import os
 import numpy as np
 import pylab as plt
 from collections import OrderedDict
-from IPython import get_ipython
-from IPython.core.magic import magics_class, Magics, line_cell_magic
-from .analyse import BenchResult, GroupResult
-from .run import run, bench
-from . import BenchException
+from prettytable import PrettyTable
+from .exception import BenchException
 
 time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
                                 [1, 1e3, 1e6, 1e9]))
 
 
+class VisualMixin():
+    """
+    Used only with StatMixin.
+    """
+    table_keys = ['Name', 'Time', 'CI', 'Std', 'Min', 'Max', 'R2',
+                  'gc_collections', 'fit_info']
+
+    def plot(self):
+        _plot_result(self)
+
+    def get_table(self, measure='s'):
+        w = time_measures[measure]
+        fit_info = ""
+        for key, value in self.fit_info.items():
+            _val = value
+            if isinstance(value, list):
+                n = len(value)
+                if n > 2:
+                    _val = "[{}, {}, ... ,{}]". \
+                        format(value[0], value[1], value[-1])
+                else:
+                    _val = value
+            info = "{}: {}\n".format(key, _val)
+            fit_info += info
+        fit_info = fit_info[:-1]
+
+        table = dict(Name=self.name,
+                     Time=self.time * w,
+                     CI=self.ci * w,
+                     Std=self.std * w,
+                     Min=self.min * w,
+                     Max=self.max * w,
+                     R2=self.r2,
+                     gc_collections=self.gc_collections,
+                     fit_info=fit_info)
+        return table
+
+    def choose_time_measure(self, perm_n_points=2):
+        t = self.time
+        c = 10 ^ perm_n_points
+        for measure, w in time_measures.items():
+            if int(t * w * c):
+                return measure
+
+    def _get_pretty_table_header(self, measure=None, table_keys=None):
+        if table_keys is None:
+            table_keys = self.table_keys
+
+        if measure is None:
+            measure = self.choose_time_measure()
+        pretty_table = PrettyTable(list(
+            map(lambda key:
+                "CI_{}[{}]"
+                .format(self.ci_params["type_ci"],
+                        self.ci_params["gamma"]) if key == "CI" else
+                "Time ({})".format(measure) if key == "Time" else key,
+                table_keys)))
+        return pretty_table
+
+    def _repr(self, table_keys=None, with_empty=True):
+        """
+        Return representation of class
+        :param table_keys: columns of representation table
+        string or dict, default ["Name", "Time", "CI"]
+        If a string, this may be "Full" or [n][t][c][s][m][M][r][g][f]
+        (n='Name', t='Time', c='CI', s='Std', m='Min', M='Max', r='R2',
+        g='gc_collections', f='fit_info')
+        Full - all available columns  (='ntcsmMrgf')
+        :param with_empty: flag to include/uninclude empty columns
+        """
+        measure = self.choose_time_measure()
+        if table_keys is None:
+            table_keys = ["Name", "Time", "CI"]
+            if self.with_gc:
+                table_keys.append("gc_collections")
+        elif table_keys is "Full":
+            table_keys = self.table_keys
+        elif isinstance(table_keys, str):
+            if len(set(table_keys) - set('ntcsmMrgf')):
+                BenchException("Table parameters must be "
+                               "a subset of set 'ntcsmMrgf'")
+            table_dict = dict(n='Name', t='Time', c='CI', s='Std',
+                              m='Min', M='Max', r='R2',
+                              g='gc_collections', f='fit_info')
+            table_keys = map(lambda x: table_dict[x], table_keys)
+        _table_keys = []
+        table = self.get_table(measure)
+        for key in table_keys:
+            if key not in table:
+                raise BenchException("'{}' is unknown key".format(key))
+            if not with_empty and not len(str(table[key])):
+                continue
+            _table_keys.append(key)
+        pretty_table = self._get_pretty_table_header(measure, _table_keys)
+
+        pretty_table.add_row([table[key] for key in _table_keys])
+        return "\n" + str(pretty_table)
+
+    def __repr__(self):
+        return self._repr(with_empty=False)
+
+
+class VisualMixinGroup():
+    table_keys = VisualMixin.table_keys
+
+    @property
+    def name(self):
+        return ""
+
+    @property
+    def bench_results(self):
+        return []
+
+    def plot(self):
+        _plot_group(self)
+
+    def _repr(self, table_keys=None, with_empty=True):
+        if table_keys is None:
+            table_keys = ["Name", "Time", "CI", "gc_collections"]
+        elif table_keys is "Full":
+            table_keys = self.table_keys
+        first_res = self.bench_results[0]
+        measure = first_res.choose_time_measure()
+        tables = [bm_res.get_table(measure) for bm_res in self.bench_results]
+        n_results = len(self.bench_results)
+        _table_keys = []
+        for key in table_keys:
+            n_empty_values = 0
+            for table in tables:
+                if key not in table:
+                    raise BenchException("'{}' is unknown key".format(key))
+                if not len(str(table[key])):
+                    n_empty_values += 1
+            if not with_empty and n_empty_values == n_results:
+                continue
+            _table_keys.append(key)
+
+        pretty_table = first_res._get_pretty_table_header(measure, _table_keys)
+        pretty_table.align = 'l'
+        for bm_res in self.bench_results:
+            table = bm_res.get_table(measure)
+            pretty_table.add_row([table[key] for key in _table_keys])
+        title = "\n{group:~^{n}}\n" \
+            .format(group=self.name, n=10)
+        return title + str(pretty_table)
+
+    def __repr__(self):
+        return self._repr(with_empty=False)
+
+
 def plot_results(res, **kwargs):
+    from .run import BenchResult, GroupResult
     if isinstance(res, BenchResult):
         return _plot_result(res, **kwargs)
     elif isinstance(res, GroupResult):
         return _plot_group(res, **kwargs)
     elif type(res) == list:
-        return [plot_results(_res) for _res in res]
+        return [plot_results(_res, **kwargs) for _res in res]
     else:
         raise BenchException("res must be BenchRes or GroupRes or list")
 
@@ -71,8 +219,8 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
 
 
 def _plot_group(gr_res, labels=None, **kwargs):
-    list_res = gr_res.results
-    n_res = len(gr_res.results)
+    list_res = gr_res.bench_results
+    n_res = len(gr_res.bench_results)
     if labels is None:
         labels = list(range(n_res))
         for i, res in enumerate(list_res):
@@ -105,135 +253,4 @@ def save_plot(fig, func_name="f", path=None, dir="img"):
         path = "{}/{}.jpg".format(dir_, np.random.randint(100))
     fig.savefig(path)
     return path
-
-
-@magics_class
-class ExecutionMagics(Magics):
-
-    @line_cell_magic
-    def benchpy(self, parameter_s='', cell=None):
-        """
-        Run benchpy.run
-        %benchpy [[-i] -g<G> -m<M> -n<N> [-p] -s<S>] statement
-        where statement is Bench or Group or list with benches
-        %%benchpy [[-i] -g<G> -m<M> -n<N> [-p] -s<S>]
-          long description of statement
-
-
-        Options:
-        -i: return full information about benchmark results.
-
-        -g: use information from garbage collector (with_gc=True).
-        Default: 'False'.
-
-        -n<N>: set maximum of batch size <N> (max_batch=<N>).
-        Default: 100.
-
-        -m<M>: set number of batches for fitting regression <M> (n_batches=<M>).
-        Default: 5.
-        batch_sizes = [1, 1+<N>/<M>, 1+2<N>/<M>, ...]
-
-        -p: show plot with regression.
-
-        -r<R>: repeat the loop iteration <R> (n_samples=<R>).
-        Default 5.
-
-        -t<T>: choose columns <T> to represent result.
-        <T> = [n][t][c][s][m][M][r][g][f]
-        (n='Name', t='Time', c='CI', s='Std', m='Min', M='Max', r='R2',
-        g='gc_collections', f='fit_info')
-
-        Default - default in repr.
-
-        Examples
-        --------
-        ::
-            In [1]: import benchpy as bp
-
-            In [2]: def f(a, b): return a + b
-
-            In [3]: %benchpy f(69, 96)
-
-            +--------------+---------------------------+
-            |  Time (µs)   |      CI_tquant[0.95]      |
-            +--------------+---------------------------+
-            | 8.9438093954 | [ 8.30582379  9.22444996] |
-            +--------------+---------------------------+
-
-            In [4]: %benchpy -t tcsr f(69, 96)
-
-            +---------------+---------------------------+----------------+----------------+
-            |   Time (µs)   |      CI_tquant[0.95]      |      Std       |       R2       |
-            +---------------+---------------------------+----------------+----------------+
-            | 9.13863231924 | [ 7.59629832  9.79898779] | 0.589640927153 | 0.999972495022 |
-            +---------------+---------------------------+----------------+----------------+
-
-            In [5]: def cycles(n):
-                      for i in range(n):
-                        arr = []
-                        arr.append(arr)
-
-            In [6]: %benchpy -g cycles(100)
-
-            +---------------+-----------------------------+----------------+
-            |   Time (µs)   |       CI_tquant[0.95]       | gc_collections |
-            +---------------+-----------------------------+----------------+
-            | 29.4959616407 | [ 28.64601155  30.4106039 ] | 0.117333333333 |
-            +---------------+-----------------------------+----------------+
-
-            In [7]: %benchpy  cycles(100)
-
-            +---------------+-----------------------------+
-            |   Time (µs)   |       CI_tquant[0.95]       |
-            +---------------+-----------------------------+
-            | 20.3202796031 | [ 19.40618596  20.80962796] |
-            +---------------+-----------------------------+
-
-
-        """
-        opts, arg_str = self.parse_options(parameter_s, 'igm:n:pr:t:',
-                                           list_all=True, posix=False)
-        glob = dict(self.shell.user_ns)
-        if cell is not None:
-            arg_str += '\n' + cell
-            arg_str = self.shell.input_transformer_manager.transform_cell(cell)
-        with_gc = 'g' in opts
-        n_samples = opts.get('r', [5])[0]
-        max_batch = opts.get('n', [100])[0]
-        n_batches = min(int(max_batch), int(opts.get('m', [5])[0]))
-        table_keys = None
-        table_labels = opts.get('t', [None])[0]
-        if table_labels is not None:
-            if len(set(table_labels) - set('ntcsmMrgf')):
-                BenchException("Table parameters must be "
-                            "a subset of set 'ntcsmMrgf'")
-            table_dict = dict(n='Name', t='Time', c='CI', s='Std',
-                              m='Min', M='Max', r='R2',
-                              g='gc_collections', f='fit_info')
-            table_keys = map(lambda x: table_dict[x], table_labels)
-
-        def f():
-            exec(arg_str, glob)
-
-        res = eval("run(bench(f), "
-                   "with_gc={with_gc}, "
-                   "n_samples={n_samples}, "
-                   "max_batch={max_batch}, "
-                   "n_batches={n_batches})"
-                   .format(with_gc=with_gc,
-                           n_samples=n_samples,
-                           n_batches=n_batches,
-                           max_batch=max_batch))
-        if 'p' in opts:
-            plot_results(res)
-            plt.show()
-
-        if 'i' in opts:
-            return res._repr("Full")
-        print(res._repr(table_keys, with_empty=False))
-
-
-ip = get_ipython()
-if ip is not None:
-    ip.register_magics(ExecutionMagics)
 
