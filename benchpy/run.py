@@ -1,11 +1,12 @@
 import gc
 import numpy as np
-from collections import defaultdict, namedtuple
+from collections import namedtuple
+from time import perf_counter
 from functools import partial
 from .analyse import StatMixin
 from .benchtime.my_time import get_time_perf_counter
 from .display import VisualMixin, VisualMixinGroup
-from .exception import BenchException
+from .exception import BenchException, BenchWarning
 
 GC_NUM_GENERATIONS = 3
 
@@ -74,7 +75,7 @@ def run(case, *args, **kwargs):
 
 
 def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
-         func_name=""):
+         func_name="", check_eq_collections=True):
     """
     :param f: function without arguments
     :param n_samples: number of samples
@@ -95,52 +96,58 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     except Exception as e:
         raise BenchException(e)
 
+    gc_time_start = []
+    gc_time_stop = []
+
+    def _gc_callback(phase, info):
+            if phase == "start":
+                gc_time_start.append(perf_counter())
+            elif phase == "stop":
+                gc_time_stop.append(perf_counter())
+            else:
+                print(phase)
+
     gc_disable = gc.disable
     gcold = gc.isenabled()
     if with_gc:
         gc.disable = lambda: None
+        gc.callbacks.append(_gc_callback)
     else:
         gc.disable()
     noop_time = [get_time_perf_counter(noop, batch) for batch in batch_sizes]
     n_batches = len(batch_sizes)
     res = np.zeros((n_samples, n_batches))
-    gc_info = defaultdict(list)
+    gc_time = np.zeros((n_samples, n_batches))
+    gc_collections = np.zeros((n_batches, n_samples, GC_NUM_GENERATIONS)) - 1.
 
     for sample in range(n_samples):
         for i, batch in enumerate(batch_sizes):
             try:
                 gc.collect()
+                gc_time_start = []
+                gc_time_stop = []
                 prev_stats = gc.get_stats()
                 time = max(get_time_perf_counter(f, batch) - noop_time[i], 0.)
                 diff, is_diff = _diff_stats(prev_stats, gc.get_stats())
+                gc_time[sample, i] = np.sum(np.array(gc_time_stop) -
+                                            np.array(gc_time_start))
                 res[sample, i] = time
-
-                if with_gc and is_diff and \
-                        (batch not in gc_info or
-                             not _diff_equal(gc_info[batch][-1], diff)):
-                    gc_info[batch].append(diff)
-
+                if with_gc:
+                    gc_collections[i, sample] = diff
             except Exception as e:
                 raise BenchException(e.args)
 
     gc.disable = gc_disable
     if gcold:
         gc.enable()
-    return BenchResult(res, _get_collections(gc_info, batch_sizes),
-                       batch_sizes, func_name)
-
-
-def _get_collections(gc_info, batch_sizes):
-    if not len(gc_info):
-        return None
-    res = []
-    for batch in batch_sizes:
-        _res = 0
-        for i in range(GC_NUM_GENERATIONS):
-            if batch in gc_info:
-                _res += gc_info[batch][0][i].get("collections", 0)
-        res.append(_res)
-    return np.array(res)
+    if with_gc:
+        del gc.callbacks[-1]
+    else:
+        gc_collections = None
+        gc_time = None
+    return BenchResult(res, gc_collections,
+                       batch_sizes, func_name,
+                       gc_time=gc_time)
 
 
 def _warm_up(f, n=2):
@@ -149,26 +156,19 @@ def _warm_up(f, n=2):
 
 
 def _diff_stats(gc_stats0, gc_stats1):
-    res = []
+    res = np.zeros(GC_NUM_GENERATIONS)
     is_diff = False
-    for st0, st1 in zip(gc_stats0, gc_stats1):
-        res.append({})
-        for key in st0.keys():
-            diff = st1[key] - st0[key]
-            if diff:
-                res[-1][key] = diff
-                is_diff = True
+    key = "collected"
+    for i, st0, st1 in zip(range(GC_NUM_GENERATIONS), gc_stats0, gc_stats1):
+        diff = st1[key] - st0[key]
+        res[i] = diff
+        if diff:
+            is_diff = True
     return res, is_diff
 
 
 def _diff_equal(diff1, diff2):
-    for d1, d2 in zip(diff1, diff2):
-        for key in set().union(d1.keys()).union(d2.keys()):
-            if key not in d1 \
-                    or key not in d2 \
-                    or d1[key] != d2[key]:
-                return False
-    return True
+    return (diff1 == diff2).all()
 
 
 def noop(*args, **kwargs):

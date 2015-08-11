@@ -14,10 +14,13 @@ class VisualMixin(object):
     Used only with StatMixin.
     """
     table_keys = ['Name', 'Time', 'CI', 'Std', 'Min', 'Max', 'R2',
-                  'gc_collections', 'fit_info']
+                  'gc_collections', 'Time_without_gc', 'fit_info']
 
-    def plot(self):
-        _plot_result(self)
+    def plot(self, **kwargs):
+        _plot_result(self, **kwargs)
+
+    def show_features(self, **kwargs):
+        show_weight_features(self, **kwargs)
 
     def get_table(self, measure='s'):
         w = time_measures[measure]
@@ -42,7 +45,12 @@ class VisualMixin(object):
                      Min=self.min * w,
                      Max=self.max * w,
                      R2=self.r2,
-                     gc_collections=self.gc_collections,
+                     gc_collections=self.gc_collections * w,
+                     Features_time=self.features_time * w,
+                     gc_time=self.gc_time * w,
+                     Time_without_gc=(self.time - self.gc_time) * w,
+                     gc_predicted_time=self.gc_predicted_time * w,
+                     Time_without_gc_pred=self.time_without_gc * w,
                      fit_info=fit_info)
         return table
 
@@ -64,11 +72,14 @@ class VisualMixin(object):
                 "CI_{}[{}]"
                 .format(self.ci_params["type_ci"],
                         self.ci_params["gamma"]) if key == "CI" else
-                "Time ({})".format(measure) if key == "Time" else key,
+                "Time ({})".format(measure) if key == "Time" else
+                "Features: {}".format(self.features) if key == "Features_time"
+                else key,
                 table_keys)))
         return pretty_table
 
-    def _repr(self, table_keys=None, with_empty=True):
+    def _repr(self, table_keys=None, with_empty=True,
+              with_features=False):
         """
         Return representation of class
         :param table_keys: columns of representation table
@@ -82,8 +93,14 @@ class VisualMixin(object):
         measure = self.choose_time_measure()
         if table_keys is None:
             table_keys = ["Name", "Time", "CI"]
+            if with_features:
+                table_keys.append("Features_time")
             if self.with_gc:
-                table_keys.append("gc_collections")
+
+                table_keys.append("gc_time")
+                table_keys.append("Time_without_gc")
+                table_keys.append("gc_predicted_time")
+                table_keys.append("Time_without_gc_pred")
         elif table_keys == "Full":
             table_keys = self.table_keys
         elif isinstance(table_keys, str):
@@ -114,20 +131,17 @@ class VisualMixin(object):
 class VisualMixinGroup(object):
     table_keys = VisualMixin.table_keys
 
-    @property
-    def name(self):
-        return ""
-
-    @property
-    def bench_results(self):
-        return []
-
     def plot(self):
         _plot_group(self)
 
     def _repr(self, table_keys=None, with_empty=True):
         if table_keys is None:
-            table_keys = ["Name", "Time", "CI", "gc_collections"]
+            table_keys = ["Name", "Time", "CI"]
+            for bm_res in self.bench_results:
+                if bm_res.with_gc:
+                    table_keys.append("gc_collections")
+                    table_keys.append("Time_without_gc")
+                    break
         elif table_keys is "Full":
             table_keys = self.table_keys
         first_res = self.bench_results[0]
@@ -189,7 +203,7 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
     for res_ in bm_res.res:
         ax.scatter(batch_sizes_, res_, c=c, s=s, alpha=alpha)
     ax.scatter(0, 0, c=c, label=label)
-    ax.plot(batch_sizes_, bm_res.means,
+    ax.plot(batch_sizes_, bm_res.y,
             c=c, linewidth=linewidth, label="{}_mean".format(label))
 
     if bm_res.regr is not None:
@@ -198,25 +212,39 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
                 label="{}_lin_regr, w={}".format(label, w),
                 linewidth=linewidth)
 
-    ymin, ymax = ax.get_ylim()
-    gc_collect = False
-    if bm_res.collections is not None:
-        for n_cs, batch in zip(bm_res.collections, bm_res.batch_sizes):
-            if n_cs:
-                ax.text(batch, ymin + shift * (ymax - ymin), n_cs,
-                        color=tuple(c.flatten()), size=text_size)
-                gc_collect = True
-
     ax.legend()
     if add_text:
-        if gc_collect:
-            ax.text(0, ymin, "gc collections:", size=text_size)
 
         ax.set_xlabel('batch_sizes')
-        ax.set_ylabel('benchtime')
+        ax.set_ylabel('time')
         ax.grid(True)
         ax.set_title(title)
     return fig
+
+
+def show_weight_features(bm_res, s=180, alpha=0.4):
+    batch_sizes = bm_res.batch_sizes
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1)
+    W = bm_res.regr.stat_w.val
+    for i, x in enumerate(bm_res.X.T):
+        c = np.random.rand(3, 1)
+        w = W[i]
+        w_x = w*x
+        ax.scatter(batch_sizes, w_x, c=c, s=s, alpha=alpha,
+                   label="{}  w={}".format(bm_res.features[i], w).format(i, w))
+        ax.plot(batch_sizes, w_x, c=c)
+
+    W_from, W_to = bm_res.regr.stat_w.ci.T
+    ax.plot(batch_sizes, bm_res.X.dot(W), c='b', label="regr")
+    ax.plot(batch_sizes, bm_res.X.dot(W_from), 'k--', c='b')
+    ax.plot(batch_sizes, bm_res.X.dot(W_to), 'k--',
+            c='b', label='border_regr')
+    ax.plot(batch_sizes, bm_res.y, 'bo', c='r', label="y")
+    ax.plot(batch_sizes, bm_res.y, c='r')
+    ax.legend()
+    ax.set_xlabel('batch_sizes')
+    ax.set_ylabel('time')
 
 
 def _plot_group(gr_res, labels=None, **kwargs):

@@ -33,7 +33,7 @@ class TestClass:
                      with_gc=False),
             with_gc=True
         )
-        assert res.results[0].with_gc
+        assert res.bench_results[0].with_gc
 
         res = bp.run(
             bp.group("sleep",
@@ -45,4 +45,4 @@ class TestClass:
                      with_gc=False),
             with_gc=True
         )
-        assert not res.results[0].with_gc
+        assert not res.bench_results[0].with_gc

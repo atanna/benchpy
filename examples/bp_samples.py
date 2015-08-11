@@ -5,11 +5,12 @@ import benchpy as bp
 import pylab as plt
 from io import StringIO
 from math import factorial, pow
+from benchpy.display import show_weight_features
 
 
 def factorial_slow(n):
     assert n >= 0
-    return 1 if n == 0 else n * factorial_slow(n - 1)
+    return 1 if n == 0 else n * factorial_slow(n-1)
 
 
 def pow_slow(x, n):
@@ -41,7 +42,7 @@ def factorial_sample(show_plot=False):
                            [bp.bench(factorial, n,
                                      func_name="math_!"),
                             bp.bench(factorial_slow, n,
-                                    func_name="slow_!")]),
+                                     func_name="slow_!")]),
                   bp.group("pow",
                            [bp.bench(pow, n, n,
                                      func_name="math^"),
@@ -79,7 +80,7 @@ def html_sample(show_plot=False):
 def circle_list_sample(show_plot=False):
     bench_list = [bp.bench(circle_list, n,
                            func_name="{} circles".format(n))
-                           for n in range(100, 201, 100)]
+                  for n in range(100, 201, 100)]
     res = bp.run([bp.group("Circle list", bench_list,
                            n_samples=100,
                            max_batch=100,
@@ -133,7 +134,6 @@ def noop_sample(show_plot=False):
 
 
 def sleep_sample(sec=0.001):
-
     res = bp.run([bp.bench(time.sleep, sec,
                            run_params=dict(n_samples=2,
                                            max_batch=2,
@@ -156,16 +156,37 @@ def exception_sample():
     print(res)
 
 
+def features_sample():
+    n = 1000
+    max_batch = 100
+    n_batches = 100
+    n_samples = 100
+
+    res = bp.bench(
+        circle_list, n,
+        run_params=dict(max_batch=max_batch,
+                        n_batches=n_batches,
+                        n_samples=n_samples)).run()
+    print(res._repr(with_features=True))
+    res.plot()
+    show_weight_features(res)
+    res = bp.bench(
+        circle_list, n,
+        run_params=dict(max_batch=max_batch,
+                        n_batches=n_batches,
+                        n_samples=n_samples,
+                        with_gc=False)).run()
+    print(res._repr(with_features=True))
+    plt.show()
+
+
 if __name__ == "__main__":
+    features_sample()
     # html_sample()
-    factorial_sample()
-    # circle_list_sample(True)
-    # circle_sample(show_plot=True)
+    # factorial_sample()
+    # circle_list_sample()
+    # circle_sample()
     # noop_sample()
     # quick_noop_sample()
     # exception_sample()
-    # sleep_sample(1e-1)
-
-
-
-
+    # sleep_sample(1e-3)
