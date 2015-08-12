@@ -14,13 +14,16 @@ class VisualMixin(object):
     Used only with StatMixin.
     """
     table_keys = ['Name', 'Time', 'CI', 'Std', 'Min', 'Max', 'R2',
-                  'gc_collections', 'Time_without_gc', 'fit_info']
+                  'Time_without_gc', 'fit_info']
 
     def plot(self, **kwargs):
-        _plot_result(self, **kwargs)
+        return _plot_result(self, **kwargs)
 
-    def show_features(self, **kwargs):
-        show_weight_features(self, **kwargs)
+    def show_weight_features(self, **kwargs):
+        return show_weight_features(self, **kwargs)
+
+    def save_info(self, *args, **kwargs):
+        save_info(self, *args, **kwargs)
 
     def get_table(self, measure='s'):
         w = time_measures[measure]
@@ -45,12 +48,12 @@ class VisualMixin(object):
                      Min=self.min * w,
                      Max=self.max * w,
                      R2=self.r2,
-                     gc_collections=self.gc_collections * w,
+                     # gc_collections=self.gc_collections * w,
                      Features_time=self.features_time * w,
                      gc_time=self.gc_time * w,
                      Time_without_gc=(self.time - self.gc_time) * w,
                      gc_predicted_time=self.gc_predicted_time * w,
-                     Time_without_gc_pred=self.time_without_gc * w,
+                     Time_without_gc_pred=self.time_without_gc_pred * w,
                      fit_info=fit_info)
         return table
 
@@ -78,29 +81,34 @@ class VisualMixin(object):
                 table_keys)))
         return pretty_table
 
+    def default_table_keys(self, with_gc=None, with_features=True):
+        table_keys = ["Name", "Time", "CI"]
+        if with_features:
+            table_keys.append("Features_time")
+        if with_gc is None:
+            with_gc = self.with_gc
+        if with_gc:
+            table_keys.append("gc_time")
+            table_keys.append("Time_without_gc")
+            table_keys.append("gc_predicted_time")
+            table_keys.append("Time_without_gc_pred")
+        return table_keys
+
     def _repr(self, table_keys=None, with_empty=True,
-              with_features=False):
+              with_features=True):
         """
         Return representation of class
         :param table_keys: columns of representation table
         string or dict, default ["Name", "Time", "CI"]
         If a string, this may be "Full" or [n][t][c][s][m][M][r][g][f]
         (n='Name', t='Time', c='CI', s='Std', m='Min', M='Max', r='R2',
-        g='gc_collections', f='fit_info')
+        f='fit_info')
         Full - all available columns  (='ntcsmMrgf')
         :param with_empty: flag to include/uninclude empty columns
         """
         measure = self.choose_time_measure()
         if table_keys is None:
-            table_keys = ["Name", "Time", "CI"]
-            if with_features:
-                table_keys.append("Features_time")
-            if self.with_gc:
-
-                table_keys.append("gc_time")
-                table_keys.append("Time_without_gc")
-                table_keys.append("gc_predicted_time")
-                table_keys.append("Time_without_gc_pred")
+            table_keys = self.default_table_keys(with_features=with_features)
         elif table_keys == "Full":
             table_keys = self.table_keys
         elif isinstance(table_keys, str):
@@ -109,7 +117,7 @@ class VisualMixin(object):
                                "a subset of set 'ntcsmMrgf'")
             table_dict = dict(n='Name', t='Time', c='CI', s='Std',
                               m='Min', M='Max', r='R2',
-                              g='gc_collections', f='fit_info')
+                              f='fit_info')
             table_keys = map(lambda x: table_dict[x], table_keys)
         _table_keys = []
         table = self.get_table(measure)
@@ -134,17 +142,13 @@ class VisualMixinGroup(object):
     def plot(self):
         _plot_group(self)
 
-    def _repr(self, table_keys=None, with_empty=True):
+    def _repr(self, table_keys=None, with_empty=True, with_features=True):
+        first_res = self.bench_results[0]
         if table_keys is None:
-            table_keys = ["Name", "Time", "CI"]
-            for bm_res in self.bench_results:
-                if bm_res.with_gc:
-                    table_keys.append("gc_collections")
-                    table_keys.append("Time_without_gc")
-                    break
+            table_keys = \
+                first_res.default_table_keys(with_features=with_features)
         elif table_keys is "Full":
             table_keys = self.table_keys
-        first_res = self.bench_results[0]
         measure = first_res.choose_time_measure()
         tables = [bm_res.get_table(measure) for bm_res in self.bench_results]
         n_results = len(self.bench_results)
@@ -186,8 +190,9 @@ def plot_results(res, **kwargs):
 
 
 def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
-                 title="", s=240, shift=0., alpha=0.2, text_size=20,
-                 linewidth=2, add_text=True):
+                 title="", s=180, shift=0., alpha=0.2,
+                 linewidth=2, add_text=True,
+                 save=False, path=None):
     if c is None:
         c = np.array([[0], [0.], [0.75]])
 
@@ -219,16 +224,21 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
         ax.set_ylabel('time')
         ax.grid(True)
         ax.set_title(title)
+    if save:
+        save_plot(fig, path=path)
     return fig
 
 
-def show_weight_features(bm_res, s=180, alpha=0.4):
+def show_weight_features(bm_res, s=180, alpha=0.4, save=False, path=None):
     batch_sizes = bm_res.batch_sizes
     fig = plt.figure()
     ax = fig.add_subplot(1, 1, 1)
     W = bm_res.regr.stat_w.val
+    n_features = len(bm_res.features)
+    cm = plt.get_cmap('gist_rainbow')
+    colors = [cm(1.*i/n_features) for i in range(n_features)]
     for i, x in enumerate(bm_res.X.T):
-        c = np.random.rand(3, 1)
+        c = colors[i]
         w = W[i]
         w_x = w*x
         ax.scatter(batch_sizes, w_x, c=c, s=s, alpha=alpha,
@@ -245,6 +255,9 @@ def show_weight_features(bm_res, s=180, alpha=0.4):
     ax.legend()
     ax.set_xlabel('batch_sizes')
     ax.set_ylabel('time')
+    if save:
+        save_plot(fig, path=path)
+    return fig
 
 
 def _plot_group(gr_res, labels=None, **kwargs):
@@ -274,12 +287,35 @@ def _dark_color(color, alpha=0.1):
     return np.maximum(color - alpha, 0)
 
 
-def save_plot(fig, func_name="f", path=None, dir="img"):
+def save_plot(fig, path=None, figsize=(25,15)):
+    fig.set_size_inches(*figsize)
     if path is None:
-        dir_ = "{}/{}/".format(dir, func_name)
-        if not os.path.exists(dir_):
-            os.makedirs(dir_)
-        path = "{}/{}.jpg".format(dir_, np.random.randint(100))
-    fig.savefig(path)
+        path="plot.jpg"
+    fig.savefig("{}".format(path))
     return path
+
+
+def save_info(res, path=None, path_suffix="", with_plots=True):
+    if path is None:
+        path = "res_info"
+    if path_suffix:
+        path_suffix = "_" + path_suffix
+    os.makedirs(path, exist_ok=True)
+    with open("{}/info{}".format(path, path_suffix), "a") as f:
+        f.write("{}\n".format(res.name.capitalize()))
+        f.write("max_batch {}\nn_batches {}\nn_samples {}\nwith_gc {}\n"
+                .format(res.batch_sizes[-1], res.n_batches, res.n_samples,
+                        res.with_gc))
+        f.write("X:  [{}]\n{}\ny:\n{}\n".format(res.features,
+                                                res.X,
+                                                res.y))
+        f.write(res._repr(with_features=True))
+        f.write("\n\n")
+
+    if with_plots:
+        res.plot(save=True, path="{}/plot{}.jpg".format(path, path_suffix))
+        res.show_weight_features(save=True,
+                                 path="{}/features{}.jpg"
+                                 .format(path, path_suffix))
+
 

@@ -38,6 +38,7 @@ class StatMixin(object):
         self.stat_time = None
         self._r2 = None
         self._ci_params = dict(gamma=gamma, type_ci=type_ci)
+        self.X, self.y
 
     @property
     def name(self):
@@ -129,17 +130,17 @@ class StatMixin(object):
         return np.array([stat_coll.val
                                 for stat_coll in self.stat_collections])
 
-    @cached_property
-    def gc_collections(self):
-        if self.collections is None:
-            return 0.
-        return self.regr.stat_w.val[1:] * self.x[1:]
+    # @cached_property
+    # def gc_collections(self):
+    #     if self.collections is None:
+    #         return 0.
+    #     return self.regr.stat_w.val[1:] * self.x[1:]
 
     @cached_property
-    def time_without_gc(self):
+    def time_without_gc_pred(self):
         if self.collections is None:
             return self.time
-        return self.time - np.sum(self.gc_collections)
+        return self.time - self.gc_predicted_time
 
     @property
     def with_gc(self):

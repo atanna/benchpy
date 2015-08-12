@@ -1,12 +1,14 @@
 import gc
 import numpy as np
 from collections import namedtuple
-from time import perf_counter
+from itertools import repeat
 from functools import partial
+from time import perf_counter
+from multiprocessing import Pool
 from .analyse import StatMixin
 from .benchtime.my_time import get_time_perf_counter
 from .display import VisualMixin, VisualMixinGroup
-from .exception import BenchException, BenchWarning
+from .exception import BenchException
 
 GC_NUM_GENERATIONS = 3
 
@@ -75,7 +77,7 @@ def run(case, *args, **kwargs):
 
 
 def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
-         func_name="", check_eq_collections=True):
+         func_name=""):
     """
     :param f: function without arguments
     :param n_samples: number of samples
@@ -91,51 +93,25 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     batch_sizes = \
         np.arange(int(max_batch), 0, -int(max_batch / n_batches))[::-1]
 
-    try:
-        _warm_up(f)
-    except Exception as e:
-        raise BenchException(e)
-
-    gc_time_start = []
-    gc_time_stop = []
-
-    def _gc_callback(phase, info):
-            if phase == "start":
-                gc_time_start.append(perf_counter())
-            elif phase == "stop":
-                gc_time_stop.append(perf_counter())
-            else:
-                print(phase)
-
     gc_disable = gc.disable
     gcold = gc.isenabled()
+    call_back_gc = CallBackGC()
     if with_gc:
         gc.disable = lambda: None
-        gc.callbacks.append(_gc_callback)
+        gc.callbacks.append(call_back_gc)
     else:
         gc.disable()
-    noop_time = [get_time_perf_counter(noop, batch) for batch in batch_sizes]
+    NoopTime.preprocessing(batch_sizes)
     n_batches = len(batch_sizes)
+
     res = np.zeros((n_samples, n_batches))
     gc_time = np.zeros((n_samples, n_batches))
-    gc_collections = np.zeros((n_batches, n_samples, GC_NUM_GENERATIONS)) - 1.
+    gc_collections = np.zeros((n_batches, n_samples, GC_NUM_GENERATIONS))
 
-    for sample in range(n_samples):
-        for i, batch in enumerate(batch_sizes):
-            try:
-                gc.collect()
-                gc_time_start = []
-                gc_time_stop = []
-                prev_stats = gc.get_stats()
-                time = max(get_time_perf_counter(f, batch) - noop_time[i], 0.)
-                diff, is_diff = _diff_stats(prev_stats, gc.get_stats())
-                gc_time[sample, i] = np.sum(np.array(gc_time_stop) -
-                                            np.array(gc_time_start))
-                res[sample, i] = time
-                if with_gc:
-                    gc_collections[i, sample] = diff
-            except Exception as e:
-                raise BenchException(e.args)
+    for i in range(n_samples):
+        with Pool() as p:
+            res[i], gc_time[i], gc_collections[:,i,:] = \
+                zip(*p.map(_get_time, zip(repeat(f), batch_sizes)))
 
     gc.disable = gc_disable
     if gcold:
@@ -153,6 +129,23 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
 def _warm_up(f, n=2):
     for i in range(n):
         f()
+
+
+def _get_time(args):
+    f, batch = args
+    _warm_up(f)
+    call_back_gc = CallBackGC()
+    gc.callbacks.append(call_back_gc)
+    gc.collect()
+    call_back_gc.clear()
+    prev_stats = gc.get_stats()
+    time = max(get_time_perf_counter(f, batch) - NoopTime.time(batch),
+               0.)
+    gc_diff, is_diff = _diff_stats(prev_stats, gc.get_stats())
+    gc_time = call_back_gc.time()
+    gc.collect()
+    del gc.callbacks[-1], call_back_gc
+    return time, gc_time, gc_diff
 
 
 def _diff_stats(gc_stats0, gc_stats1):
@@ -173,3 +166,36 @@ def _diff_equal(diff1, diff2):
 
 def noop(*args, **kwargs):
     pass
+
+
+class CallBackGC(object):
+    def __init__(self):
+        self.starts = []
+        self.stops = []
+
+    def __call__(self, phase, info):
+        if phase == "start":
+            self.starts.append(perf_counter())
+        elif phase == "stop":
+            self.stops.append(perf_counter())
+
+    def clear(self):
+        self.starts.clear()
+        self.stops.clear()
+
+    def time(self):
+        return np.sum(np.array(self.stops) - np.array(self.starts))
+
+
+class NoopTime(object):
+    times = {}
+
+    @staticmethod
+    def preprocessing(batch_sizes):
+        NoopTime.times = dict(zip(batch_sizes,
+                         [get_time_perf_counter(noop, batch)
+                          for batch in batch_sizes]))
+    @staticmethod
+    def time(batch):
+        return NoopTime.times.get(batch, get_time_perf_counter(noop, batch))
+

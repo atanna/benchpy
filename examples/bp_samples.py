@@ -1,11 +1,12 @@
+from collections import OrderedDict
 import html5lib
 import os
 import time
 import benchpy as bp
+import numpy as np
 import pylab as plt
 from io import StringIO
 from math import factorial, pow
-from benchpy.display import show_weight_features
 
 
 def factorial_slow(n):
@@ -22,7 +23,7 @@ def html_parse(data=""):
     html5lib.parse(data)
 
 
-def circle_list(n):
+def cycle_list(n):
     for _ in range(n):
         arr = []
         arr.append(arr)
@@ -43,11 +44,21 @@ def factorial_sample(show_plot=False):
                                      func_name="math_!"),
                             bp.bench(factorial_slow, n,
                                      func_name="slow_!")]),
+                  bp.group("factorial without_gc",
+                           [bp.bench(factorial, n,
+                                     func_name="math_!"),
+                            bp.bench(factorial_slow, n,
+                                     func_name="slow_!")], with_gc=False),
                   bp.group("pow",
                            [bp.bench(pow, n, n,
                                      func_name="math^"),
                             bp.bench(pow_slow, n, n,
-                                     func_name="simple^")])])
+                                     func_name="simple^")]),
+                  bp.group("pow_without_gc",
+                           [bp.bench(pow, n, n,
+                                     func_name="math^"),
+                            bp.bench(pow_slow, n, n,
+                                     func_name="simple^")], with_gc=False)])
     print(res)
 
     if show_plot:
@@ -77,15 +88,15 @@ def html_sample(show_plot=False):
         plt.show()
 
 
-def circle_list_sample(show_plot=False):
-    bench_list = [bp.bench(circle_list, n,
-                           func_name="{} circles".format(n))
+def cycle_list_sample(show_plot=False):
+    bench_list = [bp.bench(cycle_list, n,
+                           func_name="{} cycles".format(n))
                   for n in range(100, 201, 100)]
-    res = bp.run([bp.group("Circle list", bench_list,
+    res = bp.run([bp.group("Cycle list", bench_list,
                            n_samples=100,
                            max_batch=100,
                            n_batches=10),
-                  bp.group("Circle list", bench_list,
+                  bp.group("Cycle list", bench_list,
                            n_samples=100,
                            max_batch=10,
                            n_batches=10)])
@@ -96,13 +107,13 @@ def circle_list_sample(show_plot=False):
         plt.show()
 
 
-def circle_sample(show_plot=False):
+def cycle_sample(show_plot=False):
     n = 100000
-    res = bp.run(bp.group("Circle",
-                          [bp.bench(circle_list, n,
+    res = bp.run(bp.group("Cycle",
+                          [bp.bench(cycle_list, n,
                                     run_params=dict(with_gc=True),
                                     func_name="with_gc"),
-                           bp.bench(circle_list, n,
+                           bp.bench(cycle_list, n,
                                     run_params=dict(with_gc=False),
                                     func_name="without_gc")],
                           n_samples=10,
@@ -158,26 +169,26 @@ def exception_sample():
 
 def features_sample():
     n = 1000
+    max_batch = 1000
+    n_batches = 100
+    n_samples = 40
+
     max_batch = 100
     n_batches = 100
-    n_samples = 100
+    n_samples = 40
 
-    res = bp.bench(
-        circle_list, n,
-        run_params=dict(max_batch=max_batch,
-                        n_batches=n_batches,
-                        n_samples=n_samples)).run()
-    print(res._repr(with_features=True))
-    res.plot()
-    show_weight_features(res)
-    res = bp.bench(
-        circle_list, n,
-        run_params=dict(max_batch=max_batch,
-                        n_batches=n_batches,
-                        n_samples=n_samples,
-                        with_gc=False)).run()
-    print(res._repr(with_features=True))
-    plt.show()
+    run_params = OrderedDict(max_batch=max_batch,
+                  n_batches=n_batches,
+                  n_samples=n_samples)
+    path = "img_multiprocessing3/cycle/{}_{}_{}/{}/".format(max_batch, n_batches, n_samples, np.random.randint(n))
+    print(path)
+
+    bp.bench(cycle_list, n,
+             run_params=run_params).run().save_info(path, "gc")
+
+    run_params["with_gc"] = False
+    bp.bench(cycle_list, n,
+             run_params=run_params).run().save_info(path, with_plots=False)
 
 
 if __name__ == "__main__":
