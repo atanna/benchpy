@@ -10,6 +10,7 @@ from .exception import BenchException
 
 Stat = namedtuple("Stat", 'val std ci')
 Regression = namedtuple("Regression", 'X y stat_w stat_y r2')
+Regression2 = namedtuple("Regression2", 'stat_w, stat_y')
 
 time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
                                 [1, 1e3, 1e6, 1e9]))
@@ -20,16 +21,17 @@ def const_stat(x):
 
 
 class StatMixin(object):
-    def __init__(self, res, gc_collections, batch_sizes,
-                 func_name="", gamma=0.95, type_ci="tquant",
-                 gc_time=None):
+    def __init__(self, res, features, batch_sizes,
+                 func_name="", gamma=0.95, type_ci="tquant"):
         self.res = res
-        self.all_collections = gc_collections
+        self.res_features = features
+        self.with_gc = False
+        if len(self.res_features) > 1:
+            self.with_gc = True
         self.batch_sizes = batch_sizes
         self.func_name = func_name
-        self.gc_time = 0
-        if gc_time is not None:
-            self.gc_time = np.mean(gc_time/ self.batch_sizes)
+        self.gc_time = np.mean(np.mean(self.res[:,:, 2], axis=0)
+                               / self.batch_sizes)
         self.n_batches = len(batch_sizes)
         self.n_samples = len(res)
         self._init(gamma, type_ci)
@@ -38,7 +40,13 @@ class StatMixin(object):
         self.stat_time = None
         self._r2 = None
         self._ci_params = dict(gamma=gamma, type_ci=type_ci)
-        self.X, self.y
+        n_features = n_cols = len(self.res_features)
+        for i in range(n_features):
+            if self.res[:, :, -i].sum() == 0:
+                n_cols -= 1
+        self.n_features = n_cols
+        self.features = ["batches", "const"] + self.res_features[2:n_cols]
+        self.time
 
     @property
     def name(self):
@@ -49,12 +57,10 @@ class StatMixin(object):
         try:
             self.regr = self.regression(**self._ci_params)
             self.stat_time = self.regr.stat_y
-            self._r2 = self.regr.r2
         except LinAlgError:
             self.regr = None
             self.stat_time = \
                 get_mean_stat(self.y / self.batch_sizes)
-            self._r2 = 0
         return self.stat_time.val
 
     @property
@@ -73,44 +79,37 @@ class StatMixin(object):
 
     @cached_property
     def min(self):
-        self.min_res = np.min(self.res / self.batch_sizes)
+        self.min_res = np.min(self.res[:, :, 0], axis=0) / self.batch_sizes
         return self.min_res
 
     @cached_property
     def max(self):
-        self.max_res = np.max(self.res / self.batch_sizes)
+        self.max_res = np.max(self.res[:, :, 0], axis=0) / self.batch_sizes
         return self.max_res
 
-    @property
-    def r2(self):
-        if self._r2 is None:
-            self.time()
-        return self._r2
+    @cached_property
+    def stat_w(self):
+        self.time
+        return self.regr.stat_w
+
+    @cached_property
+    def X_y(self):
+        _shape = (self.n_samples, self.n_batches, 1)
+        Xy = \
+            np.c_[np.array(list([self.batch_sizes])
+                           *self.n_samples).reshape(_shape),
+                  np.ones(_shape),
+                  self.res[:, :, 2:self.n_features],
+                  self.res[:, :, 0:1]]
+        return Xy
 
     @cached_property
     def X(self):
-        self.features = ["batch_size", "const"]
-        if self.collections is not None:
-            n_col = self.collections.shape[1]
-            for i, col in enumerate(self.collections.T):
-                if np.sum(col) == 0:
-                    n_col = i
-                    break
-                self.features.append("gc_{}".format(i+1))
-            return np.concatenate((self.batch_sizes[:, np.newaxis],
-                                  np.ones((self.n_batches,1)),
-                                self.collections[:, :n_col]), axis=1)
-        return np.concatenate((self.batch_sizes[:, np.newaxis],
-                                  np.ones((self.n_batches, 1))),
-                               axis=1)
+        return self.X_y[:, :, :-1].mean(axis=0)
 
     @cached_property
     def features_time(self):
-        return self.x * self.regr.stat_w.val
-
-    @cached_property
-    def x(self):
-        return np.mean(self.X / self.batch_sizes[:, np.newaxis], axis=0)
+        return self.x_y[:-1] * self.regr.stat_w.val
 
     @cached_property
     def gc_predicted_time(self):
@@ -121,30 +120,8 @@ class StatMixin(object):
         return res
 
     @cached_property
-    def collections(self):
-        if self.all_collections is None:
-            return None
-        self.stat_collections = self.evaluate_stats(self.all_collections,
-                                                    f_stat=functools.partial(np.mean, axis=0),
-                                                    **self._ci_params)
-        return np.array([stat_coll.val
-                                for stat_coll in self.stat_collections])
-
-    # @cached_property
-    # def gc_collections(self):
-    #     if self.collections is None:
-    #         return 0.
-    #     return self.regr.stat_w.val[1:] * self.x[1:]
-
-    @cached_property
     def time_without_gc_pred(self):
-        if self.collections is None:
-            return self.time
         return self.time - self.gc_predicted_time
-
-    @property
-    def with_gc(self):
-        return self.collections is not None
 
     @property
     def ci_params(self):
@@ -158,7 +135,7 @@ class StatMixin(object):
 
     @cached_property
     def y(self):
-        self.stat_means = self.evaluate_stats(self.res.T,
+        self.stat_means = self.evaluate_stats(self.res[:,:,0].T,
                                               f_stat=np.mean,
                                               **self._ci_params)
         return np.array([stat_mean.val
@@ -169,21 +146,19 @@ class StatMixin(object):
                  for sample in arr_samples]
         return stats
 
-    def regression(self, **kwargs):
-        X, y = self.X, self.y
-        if len(X) == 1:
-            w = lin_regression(X, y)
-            return Regression(X, y, const_stat(w[0]),
-                              const_stat(y[0] / self.batch_sizes[0]), None)
-
+    def regression(self, B=1000, **kwargs):
+        indexes = np.random.random_integers(0, self.n_samples-1,
+                                            size=(B, self.n_batches))
         stat_w, arr_st_w = \
-            get_statistic(np.concatenate((X, y[:, np.newaxis]), axis=1),
-                          lin_regression,
-                          with_arr_values=True, **kwargs)
-        arr_st_y = np.array([self.x.dot(w) for w in arr_st_w])
+            get_statistic(self.X_y, lin_regression,
+                          with_arr_values=True,
+                          bootstrap_kwargs=
+                          dict(indexes=(indexes, np.arange(self.n_batches))),
+                          **kwargs)
+        self.x_y = np.mean(self.X_y / self.batch_sizes[:, np.newaxis], axis=(0, 1))
+        arr_st_y = np.array([self.x_y[:-1].dot(w) for w in arr_st_w])
         stat_y = get_mean_stat(arr_st_y, **kwargs)
-        # self.stat_Y = get_mean_stat(np.array([X.dot(w) for w in arr_st_w]), **kwargs)
-        return Regression(X, y, stat_w, stat_y, r2(y, X.dot(stat_w.val)))
+        return Regression2(stat_w, stat_y)
 
 
 def mean_and_se(stat_values, stat=None, eps=1e-9):
@@ -213,10 +188,11 @@ def lin_regression(X, y=None):
     return nnls(_X, _y)[0]
 
 
-def bootstrap(X, B=1000, **kwargs):
+def bootstrap(X, B=1000, indexes=None, **kwargs):
     n = len(X)
-    indexes = np.random.random_integers(0, n-1, size=(B, n))
-    return list(map(lambda ind: X[ind], indexes))
+    if indexes is None:
+        indexes = np.random.random_integers(0, n-1, size=(B, n))
+    return X[indexes]
 
 
 def get_statistic(values, f_stat, with_arr_values=False,

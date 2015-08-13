@@ -3,10 +3,10 @@ import numpy as np
 from collections import namedtuple
 from itertools import repeat
 from functools import partial
-from time import perf_counter
 from multiprocessing import Pool
+from time import perf_counter
 from .analyse import StatMixin
-from .benchtime.my_time import get_time_perf_counter
+from .timed_eval import get_time_perf_counter
 from .display import VisualMixin, VisualMixinGroup
 from .exception import BenchException
 
@@ -77,7 +77,7 @@ def run(case, *args, **kwargs):
 
 
 def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
-         func_name=""):
+         func_name="", multi=True):
     """
     :param f: function without arguments
     :param n_samples: number of samples
@@ -104,26 +104,25 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     NoopTime.preprocessing(batch_sizes)
     n_batches = len(batch_sizes)
 
-    res = np.zeros((n_samples, n_batches))
-    gc_time = np.zeros((n_samples, n_batches))
-    gc_collections = np.zeros((n_batches, n_samples, GC_NUM_GENERATIONS))
+    features = ["time", "gc_time"] + ["gc_{}".format(i+1)
+                                for i in range(GC_NUM_GENERATIONS)]
+    n_features = len(features)
+    res = np.zeros((n_samples, n_batches, n_features))
 
     for i in range(n_samples):
-        with Pool() as p:
-            res[i], gc_time[i], gc_collections[:,i,:] = \
-                zip(*p.map(_get_time, zip(repeat(f), batch_sizes)))
+        if multi:
+            with Pool() as p:
+                res[i, :] = p.map(_get_time, zip(repeat(f), batch_sizes))
+        else:
+            res[i][:] = list(map(_get_time, zip(repeat(f), batch_sizes)))
 
     gc.disable = gc_disable
     if gcold:
         gc.enable()
     if with_gc:
         del gc.callbacks[-1]
-    else:
-        gc_collections = None
-        gc_time = None
-    return BenchResult(res, gc_collections,
-                       batch_sizes, func_name,
-                       gc_time=gc_time)
+    return BenchResult(res, features=features,
+                       batch_sizes=batch_sizes, func_name=func_name)
 
 
 def _warm_up(f, n=2):
@@ -141,23 +140,19 @@ def _get_time(args):
     prev_stats = gc.get_stats()
     time = max(get_time_perf_counter(f, batch) - NoopTime.time(batch),
                0.)
-    gc_diff, is_diff = _diff_stats(prev_stats, gc.get_stats())
+    gc_diff = _diff_stats(prev_stats, gc.get_stats())
     gc_time = call_back_gc.time()
     gc.collect()
     del gc.callbacks[-1], call_back_gc
-    return time, gc_time, gc_diff
+    return np.concatenate(([time, gc_time], gc_diff))
 
 
 def _diff_stats(gc_stats0, gc_stats1):
     res = np.zeros(GC_NUM_GENERATIONS)
-    is_diff = False
     key = "collected"
     for i, st0, st1 in zip(range(GC_NUM_GENERATIONS), gc_stats0, gc_stats1):
-        diff = st1[key] - st0[key]
-        res[i] = diff
-        if diff:
-            is_diff = True
-    return res, is_diff
+        res[i] = st1[key] - st0[key]
+    return res
 
 
 def _diff_equal(diff1, diff2):

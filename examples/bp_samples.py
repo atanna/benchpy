@@ -8,6 +8,7 @@ import pylab as plt
 from io import StringIO
 from math import factorial, pow
 
+DIR_SAMPLE_RESULTS = "results/"
 
 def factorial_slow(n):
     assert n >= 0
@@ -66,26 +67,27 @@ def factorial_sample(show_plot=False):
         plt.show()
 
 
-def html_sample(show_plot=False):
+def html_sample():
     data = StringIO(open(
         os.path.join(os.path.join(os.path.dirname(__file__), "data"),
                      "html5lib_spec.html")).read())
 
-    res = bp.run(bp.group("Html",
-                          [bp.bench(html_parse, data,
-                                    run_params=dict(with_gc=True),
-                                    func_name="with_gc"),
-                           bp.bench(html_parse, data,
-                                    run_params=dict(with_gc=False),
-                                    func_name="without_gc")],
-                          n_samples=100,
-                          max_batch=100,
-                          n_batches=10))
-    print(res)
+    max_batch = 100
+    n_batches = 40
+    n_samples = 40
 
-    if show_plot:
-        bp.plot_results(res, title="HTML")
-        plt.show()
+    run_params = OrderedDict(max_batch=max_batch,
+                  n_batches=n_batches,
+                  n_samples=n_samples)
+    path = get_path("html_parse", "", max_batch, n_batches, n_samples)
+    print(path)
+
+    bp.bench(html_parse, data,
+             run_params=run_params).run().save_info(path, "gc")
+
+    run_params["with_gc"] = False
+    bp.bench(html_parse, data,
+             run_params=run_params).run().save_info(path)
 
 
 def cycle_list_sample(show_plot=False):
@@ -145,18 +147,30 @@ def noop_sample(show_plot=False):
 
 
 def sleep_sample(sec=0.001):
-    res = bp.run([bp.bench(time.sleep, sec,
-                           run_params=dict(n_samples=2,
-                                           max_batch=2,
-                                           n_batches=2),
-                           func_name="Sleep_[{}]".format(sec))])
+    name = "sleep_{}".format(sec)
+    max_batch = 100
+    n_batches = 40
+    n_samples = 100
+
+
+    max_batch = 100
+    n_batches = 40
+    n_samples = 40
+    res = bp.run(bp.bench(time.sleep, sec,
+                           run_params=dict(n_samples=n_samples,
+                                           max_batch=max_batch,
+                                           n_batches=n_batches),
+                           func_name=name))
+    path = get_path("sleep", sec, max_batch, n_batches, n_samples)
+    print(path)
+    res.save_info(path)
     print(res)
 
 
 def quick_noop_sample():
     res = bp.run(bp.bench(noop,
                           func_name="noop"),
-                 n_samples=2,
+                 n_samples=5,
                  max_batch=10,
                  n_batches=2)
     print(res)
@@ -169,18 +183,18 @@ def exception_sample():
 
 def features_sample():
     n = 1000
-    max_batch = 1000
+    max_batch = 4000
     n_batches = 100
     n_samples = 40
 
-    max_batch = 100
-    n_batches = 100
-    n_samples = 40
+    max_batch = 4000
+    n_batches = 40
+    n_samples = 80
 
     run_params = OrderedDict(max_batch=max_batch,
                   n_batches=n_batches,
                   n_samples=n_samples)
-    path = "img_multiprocessing3/cycle/{}_{}_{}/{}/".format(max_batch, n_batches, n_samples, np.random.randint(n))
+    path = get_path("cycle", n, max_batch, n_batches, n_samples)
     print(path)
 
     bp.bench(cycle_list, n,
@@ -188,16 +202,29 @@ def features_sample():
 
     run_params["with_gc"] = False
     bp.bench(cycle_list, n,
-             run_params=run_params).run().save_info(path, with_plots=False)
+             run_params=run_params).run().save_info(path)
+
+
+def get_path(name, params, max_batch, n_batches, n_samples):
+    dir_results = "results_"
+    path = "{dir_res}/{name}/{params}/{max_batch}_{n_batches}_{n_samples}/{folder}/"\
+        .format(dir_res=dir_results,
+                name=name,
+                params=params,
+                max_batch=max_batch,
+                n_batches=n_batches,
+                n_samples=n_samples,
+                folder=np.random.randint(1000))
+    return path
 
 
 if __name__ == "__main__":
-    features_sample()
+    # features_sample()
     # html_sample()
     # factorial_sample()
     # circle_list_sample()
     # circle_sample()
     # noop_sample()
-    # quick_noop_sample()
+    quick_noop_sample()
     # exception_sample()
     # sleep_sample(1e-3)

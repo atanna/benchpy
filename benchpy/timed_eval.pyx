@@ -1,6 +1,7 @@
+import cython
 import time
-from eval cimport PyEval_EvalCodeEx
 from cpython.ref cimport PyObject
+
 
 cdef object time_clock = time.clock
 cdef object time_perf_counter = time.perf_counter
@@ -16,6 +17,7 @@ def get_time_clock(f, int n):
     return t1 - t0
 
 
+@cython.optimize.unpack_method_calls (True)
 def get_time_perf_counter(f, int n):
     cdef int i
     cdef double t0, t1
@@ -25,6 +27,16 @@ def get_time_perf_counter(f, int n):
         f()
     t1 = time_perf_counter()
     return t1 - t0
+
+
+
+cdef extern from "Python.h":
+
+    object PyEval_EvalCodeEx(object co, object globals, object locals,
+                             PyObject **args, int argcount,
+                             PyObject **kws, int kwcount,
+                             PyObject **defs, int defcount,
+                             PyObject *kwdefs, object closure)
 
 
 def _eval_f(f, int n):

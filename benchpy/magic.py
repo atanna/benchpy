@@ -1,3 +1,4 @@
+from functools import partial
 from IPython import get_ipython
 import pylab as plt
 from IPython.core.magic import magics_class, Magics, line_cell_magic
@@ -90,13 +91,13 @@ class ExecutionMagics(Magics):
         """
         opts, arg_str = self.parse_options(parameter_s, 'igm:n:pr:t:',
                                            list_all=True, posix=False)
-        glob = dict(self.shell.user_ns)
+        glob = self.shell.user_ns
         if cell is not None:
             arg_str += '\n' + cell
             arg_str = self.shell.input_transformer_manager.transform_cell(cell)
         with_gc = 'g' in opts
-        n_samples = opts.get('r', [5])[0]
-        max_batch = opts.get('n', [100])[0]
+        n_samples = int(opts.get('r', [5])[0])
+        max_batch = int(opts.get('n', [100])[0])
         n_batches = min(int(max_batch), int(opts.get('m', [5])[0]))
         table_keys = None
         table_labels = opts.get('t', [None])[0]
@@ -108,19 +109,13 @@ class ExecutionMagics(Magics):
                               m='Min', M='Max', r='R2',
                               g='gc_collections', f='fit_info')
             table_keys = map(lambda x: table_dict[x], table_labels)
-
-        def f():
-            exec(arg_str, glob)
+        f = partial(exec, arg_str, glob)
         from .run import run, bench
-        res = eval("run(bench(f), "
-                   "with_gc={with_gc}, "
-                   "n_samples={n_samples}, "
-                   "max_batch={max_batch}, "
-                   "n_batches={n_batches})"
-                   .format(with_gc=with_gc,
+        res = run(bench(f), with_gc=with_gc,
                            n_samples=n_samples,
                            n_batches=n_batches,
-                           max_batch=max_batch))
+                           max_batch=max_batch,
+                  multi=False)
         if 'p' in opts:
             plot_results(res)
             plt.show()

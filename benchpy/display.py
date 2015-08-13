@@ -47,8 +47,6 @@ class VisualMixin(object):
                      Std=self.std * w,
                      Min=self.min * w,
                      Max=self.max * w,
-                     R2=self.r2,
-                     # gc_collections=self.gc_collections * w,
                      Features_time=self.features_time * w,
                      gc_time=self.gc_time * w,
                      Time_without_gc=(self.time - self.gc_time) * w,
@@ -205,21 +203,25 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
     batch_shift = shift * bm_res.batch_sizes[1]
     batch_sizes_ = bm_res.batch_sizes + batch_shift
 
-    for res_ in bm_res.res:
+    for res_ in bm_res.res[:,:,0]:
         ax.scatter(batch_sizes_, res_, c=c, s=s, alpha=alpha)
     ax.scatter(0, 0, c=c, label=label)
+    mean_label = "{}_mean".format(label) if len(label) else "mean"
     ax.plot(batch_sizes_, bm_res.y,
-            c=c, linewidth=linewidth, label="{}_mean".format(label))
-
-    if bm_res.regr is not None:
-        w = bm_res.regr.stat_w.val
-        ax.plot(batch_sizes_, bm_res.regr.X.dot(w), 'r--', c=_dark_color(c),
-                label="{}_lin_regr, w={}".format(label, w),
-                linewidth=linewidth)
+            c='r', linewidth=linewidth, label=mean_label)
 
     ax.legend()
-    if add_text:
+    if bm_res.stat_w is not None:
+        w = bm_res.stat_w.val
+        regr_label = "{}_regr, w={}".format(label, w) if len(label) else "regr"
+        ax.plot(batch_sizes_, bm_res.X.dot(w), 'r--', c='r',
+                linewidth=linewidth,
+                label=regr_label)
+        ax.legend()
+    ax.legend()
+    plt.legend()
 
+    if add_text:
         ax.set_xlabel('batch_sizes')
         ax.set_ylabel('time')
         ax.grid(True)
@@ -233,7 +235,7 @@ def show_weight_features(bm_res, s=180, alpha=0.4, save=False, path=None):
     batch_sizes = bm_res.batch_sizes
     fig = plt.figure()
     ax = fig.add_subplot(1, 1, 1)
-    W = bm_res.regr.stat_w.val
+    W = bm_res.stat_w.val
     n_features = len(bm_res.features)
     cm = plt.get_cmap('gist_rainbow')
     colors = [cm(1.*i/n_features) for i in range(n_features)]
@@ -245,7 +247,7 @@ def show_weight_features(bm_res, s=180, alpha=0.4, save=False, path=None):
                    label="{}  w={}".format(bm_res.features[i], w).format(i, w))
         ax.plot(batch_sizes, w_x, c=c)
 
-    W_from, W_to = bm_res.regr.stat_w.ci.T
+    W_from, W_to = bm_res.stat_w.ci.T
     ax.plot(batch_sizes, bm_res.X.dot(W), c='b', label="regr")
     ax.plot(batch_sizes, bm_res.X.dot(W_from), 'k--', c='b')
     ax.plot(batch_sizes, bm_res.X.dot(W_to), 'k--',
@@ -284,7 +286,7 @@ def _plot_group(gr_res, labels=None, **kwargs):
 
 
 def _dark_color(color, alpha=0.1):
-    return np.maximum(color - alpha, 0)
+    return np.minimum(np.maximum(color - alpha, 0), 1.)
 
 
 def save_plot(fig, path=None, figsize=(25,15)):
@@ -306,9 +308,7 @@ def save_info(res, path=None, path_suffix="", with_plots=True):
         f.write("max_batch {}\nn_batches {}\nn_samples {}\nwith_gc {}\n"
                 .format(res.batch_sizes[-1], res.n_batches, res.n_samples,
                         res.with_gc))
-        f.write("X:  [{}]\n{}\ny:\n{}\n".format(res.features,
-                                                res.X,
-                                                res.y))
+        f.write("X:  {}\n{}\ny:\n{}\n".format(res.features, res.X, res.y))
         f.write(res._repr(with_features=True))
         f.write("\n\n")
 
