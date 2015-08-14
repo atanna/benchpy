@@ -104,11 +104,10 @@ class ExecutionMagics(Magics):
         if table_labels is not None:
             if len(set(table_labels) - set('ntcsmMrgf')):
                 raise BenchException("Table parameters must be "
-                               "a subset of set 'ntcsmMrgf'")
-            table_dict = dict(n='Name', t='Time', c='CI', s='Std',
-                              m='Min', M='Max', r='R2',
-                              g='gc_collections', f='fit_info')
-            table_keys = map(lambda x: table_dict[x], table_labels)
+                                     "a subset of set 'ntcsmMrgf'."
+                                     "Use %benchpy? for more detailed "
+                                     "information")
+            table_keys = table_labels
         f = partial(exec, arg_str, glob)
         from .run import run, bench
         res = run(bench(f), with_gc=with_gc,
@@ -121,8 +120,9 @@ class ExecutionMagics(Magics):
             plt.show()
 
         if 'i' in opts:
-            return res._repr("Full")
-        print(res._repr(table_keys, with_empty=False))
+            print(res._repr("Full"))
+        else:
+            print(res._repr(table_keys, with_empty=False))
 
 
 ip = get_ipython()

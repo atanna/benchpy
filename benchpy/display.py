@@ -13,8 +13,11 @@ class VisualMixin(object):
     """
     Used only with StatMixin.
     """
-    table_keys = ['Name', 'Time', 'CI', 'Std', 'Min', 'Max', 'R2',
-                  'Time_without_gc', 'fit_info']
+    table_keys = ['Name', 'Time', 'CI', 'Features_time',
+                  'Std', 'Min', 'Max',
+                  'gc_time', 'Time_without_gc',
+                  'gc_predicted_time', 'Time_without_gc_pred',
+                  'fit_info']
 
     def plot(self, **kwargs):
         return _plot_result(self, **kwargs)
@@ -98,9 +101,9 @@ class VisualMixin(object):
         Return representation of class
         :param table_keys: columns of representation table
         string or dict, default ["Name", "Time", "CI"]
-        If a string, this may be "Full" or [n][t][c][s][m][M][r][g][f]
-        (n='Name', t='Time', c='CI', s='Std', m='Min', M='Max', r='R2',
-        f='fit_info')
+        If a string, this may be "Full" or [n][t][c][f][s][m][M][g][i]
+        (n='Name', t='Time', c='CI', f='Features_time', s='Std', m='Min', M='Max',
+        i='fit_info')
         Full - all available columns  (='ntcsmMrgf')
         :param with_empty: flag to include/uninclude empty columns
         """
@@ -113,9 +116,9 @@ class VisualMixin(object):
             if len(set(table_keys) - set('ntcsmMrgf')):
                 raise BenchException("Table parameters must be "
                                "a subset of set 'ntcsmMrgf'")
-            table_dict = dict(n='Name', t='Time', c='CI', s='Std',
-                              m='Min', M='Max', r='R2',
-                              f='fit_info')
+            table_dict = dict(n='Name', t='Time', c='CI',
+                              f='Features_time', s='Std',
+                              m='Min', M='Max', i='fit_info')
             table_keys = map(lambda x: table_dict[x], table_keys)
         _table_keys = []
         table = self.get_table(measure)
@@ -138,7 +141,7 @@ class VisualMixinGroup(object):
     table_keys = VisualMixin.table_keys
 
     def plot(self):
-        _plot_group(self)
+        return _plot_group(self)
 
     def _repr(self, table_keys=None, with_empty=True, with_features=True):
         first_res = self.bench_results[0]
@@ -190,31 +193,41 @@ def plot_results(res, **kwargs):
 def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
                  title="", s=180, shift=0., alpha=0.2,
                  linewidth=2, add_text=True,
-                 save=False, path=None):
+                 save=False, path=None,
+                 figsize=(25, 15)):
     if c is None:
         c = np.array([[0], [0.], [0.75]])
 
     if fig is None:
-        fig = plt.figure()
+        fig = plt.figure(figsize=figsize)
         ax = fig.add_subplot(111)
     else:
         ax = fig.axes[n_ax]
 
     batch_shift = shift * bm_res.batch_sizes[1]
     batch_sizes_ = bm_res.batch_sizes + batch_shift
+    measure = bm_res.choose_time_measure()
+    w_measure = time_measures[measure]
+    for time_ in bm_res.full_time:
+        ax.scatter(batch_sizes_, time_*w_measure, c=c, s=s, alpha=alpha)
+    ax.scatter([],[], c=c,s=s,alpha=alpha, label=label)
 
-    for res_ in bm_res.res[:,:,0]:
-        ax.scatter(batch_sizes_, res_, c=c, s=s, alpha=alpha)
-    ax.scatter(0, 0, c=c, label=label)
+    c = mixed_color(c, p=0.35)
     mean_label = "{}_mean".format(label) if len(label) else "mean"
-    ax.plot(batch_sizes_, bm_res.y,
-            c='r', linewidth=linewidth, label=mean_label)
+    ax.plot(batch_sizes_, bm_res.y*w_measure,
+            c=c, linewidth=linewidth, label=mean_label)
+    X = bm_res.batch_sizes[:, np.newaxis]*bm_res.x_y[:-1]
+    X[:, 1] = 1.
+    [ax.plot(batch_sizes_, X.dot(stat_w)*w_measure,
+            c='r', linewidth=linewidth, alpha=0.15)
+     for stat_w in bm_res.arr_st_w]
+
 
     ax.legend()
     if bm_res.stat_w is not None:
         w = bm_res.stat_w.val
         regr_label = "{}_regr, w={}".format(label, w) if len(label) else "regr"
-        ax.plot(batch_sizes_, bm_res.X.dot(w), 'r--', c='r',
+        ax.plot(batch_sizes_, bm_res.X.dot(w)*w_measure, 'r--', c=c,
                 linewidth=linewidth,
                 label=regr_label)
         ax.legend()
@@ -223,7 +236,7 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
 
     if add_text:
         ax.set_xlabel('batch_sizes')
-        ax.set_ylabel('time')
+        ax.set_ylabel('time, {}'.format(measure))
         ax.grid(True)
         ax.set_title(title)
     if save:
@@ -231,38 +244,7 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
     return fig
 
 
-def show_weight_features(bm_res, s=180, alpha=0.4, save=False, path=None):
-    batch_sizes = bm_res.batch_sizes
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1)
-    W = bm_res.stat_w.val
-    n_features = len(bm_res.features)
-    cm = plt.get_cmap('gist_rainbow')
-    colors = [cm(1.*i/n_features) for i in range(n_features)]
-    for i, x in enumerate(bm_res.X.T):
-        c = colors[i]
-        w = W[i]
-        w_x = w*x
-        ax.scatter(batch_sizes, w_x, c=c, s=s, alpha=alpha,
-                   label="{}  w={}".format(bm_res.features[i], w).format(i, w))
-        ax.plot(batch_sizes, w_x, c=c)
-
-    W_from, W_to = bm_res.stat_w.ci.T
-    ax.plot(batch_sizes, bm_res.X.dot(W), c='b', label="regr")
-    ax.plot(batch_sizes, bm_res.X.dot(W_from), 'k--', c='b')
-    ax.plot(batch_sizes, bm_res.X.dot(W_to), 'k--',
-            c='b', label='border_regr')
-    ax.plot(batch_sizes, bm_res.y, 'bo', c='r', label="y")
-    ax.plot(batch_sizes, bm_res.y, c='r')
-    ax.legend()
-    ax.set_xlabel('batch_sizes')
-    ax.set_ylabel('time')
-    if save:
-        save_plot(fig, path=path)
-    return fig
-
-
-def _plot_group(gr_res, labels=None, **kwargs):
+def _plot_group(gr_res, labels=None, figsize=(25, 15), **kwargs):
     list_res = gr_res.bench_results
     n_res = len(gr_res.bench_results)
     if labels is None:
@@ -272,7 +254,7 @@ def _plot_group(gr_res, labels=None, **kwargs):
                 labels[i] = res.func_name
 
     batch_shift = 0.15 / n_res
-    fig = plt.figure()
+    fig = plt.figure(figsize=figsize)
     fig.add_subplot(111)
     add_text = True
     for i, res, label in zip(range(n_res), list_res, labels):
@@ -285,8 +267,45 @@ def _plot_group(gr_res, labels=None, **kwargs):
     return fig
 
 
-def _dark_color(color, alpha=0.1):
-    return np.minimum(np.maximum(color - alpha, 0), 1.)
+def show_weight_features(bm_res, s=180, alpha=0.4, figsize=(25, 15),
+                         save=False, path=None):
+    batch_sizes = bm_res.batch_sizes
+    fig = plt.figure(figsize=figsize)
+    ax = fig.add_subplot(1, 1, 1)
+    W = bm_res.stat_w.val
+    n_features = len(bm_res.features)
+    cm = plt.get_cmap('gist_rainbow')
+    colors = [cm(1.*i/n_features) for i in range(n_features)]
+    measure = bm_res.choose_time_measure()
+    w_measure = time_measures[measure]
+    for i, x in enumerate(bm_res.X.T):
+        c = colors[i]
+        w = W[i]
+        w_x = w*x*w_measure
+        ax.scatter(batch_sizes, w_x, c=c, s=s, alpha=alpha,
+                   label="{}  w={}".format(bm_res.features[i], w).format(i, w))
+        ax.plot(batch_sizes, w_x, c=c)
+
+    W_from, W_to = bm_res.stat_w.ci.T
+    ax.plot(batch_sizes, bm_res.X.dot(W)*w_measure, c='b', label="regr")
+    ax.plot(batch_sizes, bm_res.X.dot(W_from)*w_measure, 'k--', c='b')
+    ax.plot(batch_sizes, bm_res.X.dot(W_to)*w_measure, 'k--',
+            c='b', label='border_regr')
+    ax.plot(batch_sizes, bm_res.y*w_measure, 'bo', c='r', label="y")
+    ax.plot(batch_sizes, bm_res.y*w_measure, c='r')
+    ax.legend()
+    ax.set_xlabel('batch_sizes')
+    ax.set_ylabel('time, {}'.format(measure))
+    if save:
+        save_plot(fig, path=path)
+    return fig
+
+
+def mixed_color(c0, c1=None, p=0.5):
+    if c1 is None:
+        c1 = np.array([[1], [0], [0]])
+    c = c0*p + c1*(1-p)
+    return c / np.sum(c)
 
 
 def save_plot(fig, path=None, figsize=(25,15)):

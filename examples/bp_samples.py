@@ -73,7 +73,7 @@ def html_sample():
                      "html5lib_spec.html")).read())
 
     max_batch = 100
-    n_batches = 40
+    n_batches = 20
     n_samples = 40
 
     run_params = OrderedDict(max_batch=max_batch,
@@ -110,7 +110,7 @@ def cycle_list_sample(show_plot=False):
 
 
 def cycle_sample(show_plot=False):
-    n = 100000
+    n = 10
     res = bp.run(bp.group("Cycle",
                           [bp.bench(cycle_list, n,
                                     run_params=dict(with_gc=True),
@@ -119,7 +119,7 @@ def cycle_sample(show_plot=False):
                                     run_params=dict(with_gc=False),
                                     func_name="without_gc")],
                           n_samples=10,
-                          max_batch=100,
+                          max_batch=10,
                           n_batches=10))
     print(res)
 
@@ -153,16 +153,16 @@ def sleep_sample(sec=0.001):
     n_samples = 100
 
 
-    max_batch = 100
-    n_batches = 40
-    n_samples = 40
+    max_batch = 10
+    n_batches = 10
+    n_samples = 10
+    path = get_path("sleep", sec, max_batch, n_batches, n_samples)
+    print(path)
     res = bp.run(bp.bench(time.sleep, sec,
                            run_params=dict(n_samples=n_samples,
                                            max_batch=max_batch,
                                            n_batches=n_batches),
                            func_name=name))
-    path = get_path("sleep", sec, max_batch, n_batches, n_samples)
-    print(path)
     res.save_info(path)
     print(res)
 
@@ -187,9 +187,11 @@ def features_sample():
     n_batches = 100
     n_samples = 40
 
-    max_batch = 4000
-    n_batches = 40
-    n_samples = 80
+
+    n = 100
+    max_batch = 500
+    n_batches = 60
+    n_samples = 100
 
     run_params = OrderedDict(max_batch=max_batch,
                   n_batches=n_batches,
@@ -206,8 +208,9 @@ def features_sample():
 
 
 def get_path(name, params, max_batch, n_batches, n_samples):
-    dir_results = "results_"
-    path = "{dir_res}/{name}/{params}/{max_batch}_{n_batches}_{n_samples}/{folder}/"\
+    dir_results = "results3"
+    path = "{dir_res}/{name}/{params}/" \
+           "{max_batch}_{n_batches}_{n_samples}/{folder}/"\
         .format(dir_res=dir_results,
                 name=name,
                 params=params,
@@ -219,12 +222,12 @@ def get_path(name, params, max_batch, n_batches, n_samples):
 
 
 if __name__ == "__main__":
-    # features_sample()
+    features_sample()
     # html_sample()
     # factorial_sample()
-    # circle_list_sample()
-    # circle_sample()
+    # cycle_list_sample()
+    # cycle_sample(True)
     # noop_sample()
-    quick_noop_sample()
+    # quick_noop_sample()
     # exception_sample()
-    # sleep_sample(1e-3)
+    # sleep_sample(1e-9)

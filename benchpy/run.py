@@ -32,16 +32,12 @@ class BenchResult(StatMixin, VisualMixin):
 
 class GroupResult(VisualMixinGroup):
     def __init__(self, name, results):
-        self._name = name
+        self.name = name
         self.results = results
         res = results[0]
         self.n_samples = res.n_samples
         self.batch_sizes = res.batch_sizes
         self.n_batches = res.n_batches
-
-    @property
-    def name(self):
-        return self._name
 
     @property
     def bench_results(self):
@@ -107,22 +103,28 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     features = ["time", "gc_time"] + ["gc_{}".format(i+1)
                                 for i in range(GC_NUM_GENERATIONS)]
     n_features = len(features)
-    res = np.zeros((n_samples, n_batches, n_features))
+    full_time = np.zeros((n_samples, n_batches))
+    gc_time = np.zeros((n_samples, n_batches))
+    gc_collected = np.zeros((n_samples, n_batches, GC_NUM_GENERATIONS))
 
     for i in range(n_samples):
         if multi:
             with Pool() as p:
-                res[i, :] = p.map(_get_time, zip(repeat(f), batch_sizes))
+                full_time[i], gc_time[i], gc_collected[i] = \
+                    zip(*p.map(_get_time, zip(repeat(f), batch_sizes)))
         else:
-            res[i][:] = list(map(_get_time, zip(repeat(f), batch_sizes)))
+            full_time[i], gc_time[i], gc_collected[i] = \
+                zip(*list(map(_get_time, zip(repeat(f), batch_sizes))))
 
     gc.disable = gc_disable
     if gcold:
         gc.enable()
     if with_gc:
         del gc.callbacks[-1]
-    return BenchResult(res, features=features,
-                       batch_sizes=batch_sizes, func_name=func_name)
+    return BenchResult(full_time, gc_time=gc_time,
+                       gc_collected=gc_collected,
+                       batch_sizes=batch_sizes,
+                       func_name=func_name)
 
 
 def _warm_up(f, n=2):
@@ -144,7 +146,7 @@ def _get_time(args):
     gc_time = call_back_gc.time()
     gc.collect()
     del gc.callbacks[-1], call_back_gc
-    return np.concatenate(([time, gc_time], gc_diff))
+    return time, gc_time, gc_diff
 
 
 def _diff_stats(gc_stats0, gc_stats1):

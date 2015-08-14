@@ -21,32 +21,41 @@ def const_stat(x):
 
 
 class StatMixin(object):
-    def __init__(self, res, features, batch_sizes,
+    def __init__(self, full_time, batch_sizes,
+                 gc_time=None, gc_collected=None,
                  func_name="", gamma=0.95, type_ci="tquant"):
-        self.res = res
-        self.res_features = features
-        self.with_gc = False
-        if len(self.res_features) > 1:
-            self.with_gc = True
+        self.n_samples, self.n_batches = full_time.shape
+        self.full_time = full_time
         self.batch_sizes = batch_sizes
         self.func_name = func_name
-        self.gc_time = np.mean(np.mean(self.res[:,:, 2], axis=0)
-                               / self.batch_sizes)
-        self.n_batches = len(batch_sizes)
-        self.n_samples = len(res)
         self._init(gamma, type_ci)
+        self.init_features(gc_collected)
+        if gc_time is not None:
+            self.gc_time = np.mean(np.mean(gc_time, axis=0)
+                                   / self.batch_sizes)
+
+    def init_features(self, gc_collected):
+        n_gc_generations = gc_collected.shape[-1]
+        self.with_gc = False
+        for i in range(1, n_gc_generations+1):
+            if gc_collected[:,:,-i].sum() == 0:
+                n_gc_generations -= 1
+        if n_gc_generations > 0:
+            self.with_gc = True
+        _shape = (self.n_samples, self.n_batches, 1)
+        self.features = ["batch", "const"] + ["gc_{}".format(i+1)
+                                              for i in range(n_gc_generations)]
+        self.X_y = \
+            np.c_[np.array(list([self.batch_sizes])
+                           *self.n_samples).reshape(_shape),
+                  np.ones(_shape),
+                  gc_collected[:, :, :n_gc_generations],
+                  self.full_time.reshape(_shape)]
 
     def _init(self, gamma=0.95, type_ci="tquant"):
         self.stat_time = None
         self._r2 = None
         self._ci_params = dict(gamma=gamma, type_ci=type_ci)
-        n_features = n_cols = len(self.res_features)
-        for i in range(n_features):
-            if self.res[:, :, -i].sum() == 0:
-                n_cols -= 1
-        self.n_features = n_cols
-        self.features = ["batches", "const"] + self.res_features[2:n_cols]
-        self.time
 
     @property
     def name(self):
@@ -60,7 +69,7 @@ class StatMixin(object):
         except LinAlgError:
             self.regr = None
             self.stat_time = \
-                get_mean_stat(self.y / self.batch_sizes)
+                get_mean_stat(self.X_y[:,:,-1] / self.batch_sizes)
         return self.stat_time.val
 
     @property
@@ -79,33 +88,33 @@ class StatMixin(object):
 
     @cached_property
     def min(self):
-        self.min_res = np.min(self.res[:, :, 0], axis=0) / self.batch_sizes
+        self.min_res = np.min(self.full_time /
+                              self.batch_sizes[:, np.newaxis].T)
         return self.min_res
 
     @cached_property
     def max(self):
-        self.max_res = np.max(self.res[:, :, 0], axis=0) / self.batch_sizes
+        self.max_res = np.max(self.full_time /
+                              self.batch_sizes[:, np.newaxis].T)
         return self.max_res
 
-    @cached_property
+    @property
     def stat_w(self):
         self.time
         return self.regr.stat_w
 
     @cached_property
-    def X_y(self):
-        _shape = (self.n_samples, self.n_batches, 1)
-        Xy = \
-            np.c_[np.array(list([self.batch_sizes])
-                           *self.n_samples).reshape(_shape),
-                  np.ones(_shape),
-                  self.res[:, :, 2:self.n_features],
-                  self.res[:, :, 0:1]]
-        return Xy
+    def X(self):
+        _X = self.X_y[:, :, :-1].mean(axis=0)
+        for i, feature in enumerate(self.features):
+            if feature == "const":
+                _X[:, i] = 1.
+                break
+        return _X
 
     @cached_property
-    def X(self):
-        return self.X_y[:, :, :-1].mean(axis=0)
+    def y(self):
+        return self.full_time.mean(axis=0)
 
     @cached_property
     def features_time(self):
@@ -133,14 +142,6 @@ class StatMixin(object):
                     samples=self.n_samples,
                     batches=self.batch_sizes)
 
-    @cached_property
-    def y(self):
-        self.stat_means = self.evaluate_stats(self.res[:,:,0].T,
-                                              f_stat=np.mean,
-                                              **self._ci_params)
-        return np.array([stat_mean.val
-                                for stat_mean in self.stat_means])
-
     def evaluate_stats(self, arr_samples, f_stat, **kwargs):
         stats = [get_statistic(values=sample, f_stat=f_stat, **kwargs)
                  for sample in arr_samples]
@@ -155,7 +156,13 @@ class StatMixin(object):
                           bootstrap_kwargs=
                           dict(indexes=(indexes, np.arange(self.n_batches))),
                           **kwargs)
-        self.x_y = np.mean(self.X_y / self.batch_sizes[:, np.newaxis], axis=(0, 1))
+        self.x_y = np.mean(self.X_y / self.batch_sizes[:, np.newaxis],
+                           axis=(0, 1))
+        self.arr_st_w = arr_st_w
+        for i, feature in enumerate(self.features):
+            if feature == "const":
+                self.x_y[i] = 1.
+                break
         arr_st_y = np.array([self.x_y[:-1].dot(w) for w in arr_st_w])
         stat_y = get_mean_stat(arr_st_y, **kwargs)
         return Regression2(stat_w, stat_y)
