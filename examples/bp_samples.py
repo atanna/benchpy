@@ -76,6 +76,10 @@ def html_sample():
     n_batches = 20
     n_samples = 40
 
+    max_batch = 10
+    n_batches = 10
+    n_samples = 10
+
     run_params = OrderedDict(max_batch=max_batch,
                   n_batches=n_batches,
                   n_samples=n_samples)
@@ -100,8 +104,8 @@ def cycle_list_sample(show_plot=False):
                            n_batches=10),
                   bp.group("Cycle list", bench_list,
                            n_samples=100,
-                           max_batch=10,
-                           n_batches=10)])
+                           max_batch=45,
+                           n_batches=80)])
     print(res)
 
     if show_plot:
@@ -153,9 +157,9 @@ def sleep_sample(sec=0.001):
     n_samples = 100
 
 
-    max_batch = 10
-    n_batches = 10
-    n_samples = 10
+    max_batch = 50
+    n_batches = 50
+    n_samples = 50
     path = get_path("sleep", sec, max_batch, n_batches, n_samples)
     print(path)
     res = bp.run(bp.bench(time.sleep, sec,
@@ -187,11 +191,15 @@ def features_sample():
     n_batches = 100
     n_samples = 40
 
-
     n = 100
     max_batch = 500
     n_batches = 60
     n_samples = 100
+
+    n = 100
+    max_batch = 100
+    n_batches = 40
+    n_samples = 80
 
     run_params = OrderedDict(max_batch=max_batch,
                   n_batches=n_batches,
@@ -208,7 +216,7 @@ def features_sample():
 
 
 def get_path(name, params, max_batch, n_batches, n_samples):
-    dir_results = "results3"
+    dir_results = "results4"
     path = "{dir_res}/{name}/{params}/" \
            "{max_batch}_{n_batches}_{n_samples}/{folder}/"\
         .format(dir_res=dir_results,
@@ -221,8 +229,36 @@ def get_path(name, params, max_batch, n_batches, n_samples):
     return path
 
 
+def cycle_and_sleep(n, t):
+    cycle_list(n)
+    time.sleep(t)
+
+
+def sample(f, *params, name=None,
+           max_batch=100, n_batches=40,
+           n_samples=100, path=None):
+    if name is None:
+        name = f.__name__ + str(params)
+    if path is None:
+        path = get_path(f.__name__, params, max_batch, n_batches, n_samples)
+    print(path)
+    run_params=dict(n_samples=n_samples,
+                    max_batch=max_batch,
+                    n_batches=n_batches)
+
+    res = bp.bench(f, *params, run_params=run_params, func_name=name)\
+        .run()
+    res.save_info(path, "gc")
+    print(res)
+
+    run_params["with_gc"] = False
+    res = bp.bench(f, *params, run_params=run_params).run()
+    res.save_info(path)
+    print(res)
+
+
 if __name__ == "__main__":
-    features_sample()
+    # features_sample()
     # html_sample()
     # factorial_sample()
     # cycle_list_sample()
@@ -230,4 +266,8 @@ if __name__ == "__main__":
     # noop_sample()
     # quick_noop_sample()
     # exception_sample()
-    # sleep_sample(1e-9)
+    # sleep_sample(1e-2)
+    # sample(time.sleep, 5e-3, max_batch=100, n_batches=100, n_samples=20)
+    sample(cycle_and_sleep, 100, 1e-2, max_batch=50, n_batches=50, n_samples=80)
+
+

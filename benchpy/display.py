@@ -131,10 +131,10 @@ class VisualMixin(object):
         pretty_table = self._get_pretty_table_header(measure, _table_keys)
 
         pretty_table.add_row([table[key] for key in _table_keys])
-        return "\n" + str(pretty_table)
+        return pretty_table
 
     def __repr__(self):
-        return self._repr(with_empty=False)
+        return "\n" + str(self._repr(with_empty=False))
 
 
 class VisualMixinGroup(object):
@@ -203,8 +203,9 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
         ax = fig.add_subplot(111)
     else:
         ax = fig.axes[n_ax]
-
-    batch_shift = shift * bm_res.batch_sizes[1]
+    batch_shift = 0
+    if shift > 0:
+        batch_shift = shift * bm_res.batch_sizes[1]
     batch_sizes_ = bm_res.batch_sizes + batch_shift
     measure = bm_res.choose_time_measure()
     w_measure = time_measures[measure]
@@ -217,7 +218,8 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
     ax.plot(batch_sizes_, bm_res.y*w_measure,
             c=c, linewidth=linewidth, label=mean_label)
     X = bm_res.batch_sizes[:, np.newaxis]*bm_res.x_y[:-1]
-    X[:, 1] = 1.
+    if X.shape[1] > 1:
+        X[:, 1] = 1.
     [ax.plot(batch_sizes_, X.dot(stat_w)*w_measure,
             c='r', linewidth=linewidth, alpha=0.15)
      for stat_w in bm_res.arr_st_w]
@@ -327,8 +329,8 @@ def save_info(res, path=None, path_suffix="", with_plots=True):
         f.write("max_batch {}\nn_batches {}\nn_samples {}\nwith_gc {}\n"
                 .format(res.batch_sizes[-1], res.n_batches, res.n_samples,
                         res.with_gc))
-        f.write("X:  {}\n{}\ny:\n{}\n".format(res.features, res.X, res.y))
-        f.write(res._repr(with_features=True))
+        f.write("X:  {}\n{}\ny:\n{}\n\n".format(res.features, res.X, res.y))
+        f.write(str(res._repr(with_features=True)))
         f.write("\n\n")
 
     if with_plots:

@@ -33,13 +33,26 @@ class StatMixin(object):
         if gc_time is not None:
             self.gc_time = np.mean(np.mean(gc_time, axis=0)
                                    / self.batch_sizes)
+        self.regression()
+
+    def check_lin_dependence(self, threshold=1e-2):
+        if self.n_batches == 1:
+            self.X_y = np.c_[self.X_y[:,:,:1], self.X_y[:, :, -1:]]
+            self.features = self.features[:1]
+            return
+        s = np.linalg.svd(self.X_y[:, :, :-1])[1].sum(axis=0)
+        print(s)
+        if sum(s < threshold):
+            self.X_y = np.c_[self.X_y[:, :, :2], self.X_y[:, :, -1:]]
+            self.features = self.features[:2]
 
     def init_features(self, gc_collected):
         n_gc_generations = gc_collected.shape[-1]
         self.with_gc = False
         for i in range(1, n_gc_generations+1):
-            if gc_collected[:,:,-i].sum() == 0:
+            if gc_collected[:, :, -i].sum() == 0:
                 n_gc_generations -= 1
+
         if n_gc_generations > 0:
             self.with_gc = True
         _shape = (self.n_samples, self.n_batches, 1)
@@ -51,6 +64,7 @@ class StatMixin(object):
                   np.ones(_shape),
                   gc_collected[:, :, :n_gc_generations],
                   self.full_time.reshape(_shape)]
+        self.check_lin_dependence()
 
     def _init(self, gamma=0.95, type_ci="tquant"):
         self.stat_time = None
@@ -187,12 +201,15 @@ def mean_and_se(stat_values, stat=None, eps=1e-9):
     return mean_stat, se_stat
 
 
-def lin_regression(X, y=None):
+def lin_regression(X, y=None, alpha=0.15):
     if y is None:
         _X, _y = X[:, :-1], X[:, -1]
     else:
         _X, _y = X, y
-    return nnls(_X, _y)[0]
+    n = _X.shape[1]
+    X_new = np.concatenate([_X, alpha*np.eye(n)])
+    y_new = np.concatenate([_y, np.zeros(n)])
+    return nnls(X_new, y_new)[0]
 
 
 def bootstrap(X, B=1000, indexes=None, **kwargs):
