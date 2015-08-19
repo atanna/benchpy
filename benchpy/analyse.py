@@ -20,33 +20,107 @@ def const_stat(x):
     return Stat(x, 0., np.array([x, x]))
 
 
+class Features(object):
+    def __init__(self, features, X_y, main_feature="batch"):
+        self.feature_names = np.array(features)
+        self.X_y = X_y
+        self.main_feature = main_feature
+        self.y = X_y[:, :, -1]
+        self._renumbered()
+
+    def delete(self, features):
+        indexes = self._indexes(features)
+        self._del_id(indexes)
+
+    def delete_all_features_except(self, features):
+        indexes = self._indexes(features)
+        del_indexes = list(set(range(self.n)) - set(indexes))
+        self._del_id(del_indexes)
+
+    def delete_gc(self):
+        gc_features = self._get_gc_features()
+        self.delete(gc_features)
+
+    def get_X_without(self, features):
+        _indexes = self._indexes(features)
+        indexes = list(set(range(self.n)) - set(_indexes))
+        return self.X[:, :, indexes]
+
+    def get_X_with(self, features):
+        indexes = self._indexes(features)
+        return self.X[:, :, indexes]
+
+    def _get_gc_features(self):
+        return list(filter(lambda x: x.startswith("gc"), self.feature_names))
+
+    def _del_id(self, indexes):
+        np.delete(self.X_y, indexes, axis=2)
+        np.delete(self.feature_names, indexes)
+        self._renumbered()
+
+    def _indexes(self, features):
+        return [self._get_id(feature) for feature in features]
+
+    def _renumbered(self):
+        for i, feature in enumerate(self.feature_names):
+            self._set_id(feature, i)
+
+    def _get_id(self, feature):
+        return self.__dict__.get(feature, -1)
+
+    def _set_id(self, feature, i):
+        self.__dict__[feature] = i
+
+    @property
+    def X(self):
+        return self.X_y[:, :, :-1]
+
+    @property
+    def n(self):
+        return len(self.feature_names)
+
+    def is_depended(self, X=None, threshold=1e-2):
+        if X is None:
+            X = self.X
+        if X.shape[2] < 2:
+            return False
+        s = np.linalg.svd(X)[1].sum(axis=0)
+        return sum(s < threshold * len(X))
+
+    def fixed_dependency(self):
+        if self.X.shape[1] == 1:
+            self.delete_all_features_except([self.main_feature])
+
+        if not self.is_depended():
+            return
+
+        for i, feature in enumerate(self.feature_names[::-1]):
+            if feature != self.main_feature:
+                dep = self.is_depended(self.get_X_without([feature]))
+                if not dep:
+                    self.delete([feature])
+                    return
+        self.delete(self.feature_names[-2:])
+        self.fixed_dependency()
+
+
 class StatMixin(object):
     def __init__(self, full_time, batch_sizes,
                  gc_time=None, gc_collected=None,
+                 mem=None,
                  func_name="", gamma=0.95, type_ci="tquant"):
         self.n_samples, self.n_batches = full_time.shape
         self.full_time = full_time
         self.batch_sizes = batch_sizes
         self.func_name = func_name
-        self._init(gamma, type_ci)
-        self.init_features(gc_collected)
+        self._init(gamma,  type_ci)
+        self.init_features(gc_collected, mem)
         if gc_time is not None:
             self.gc_time = np.mean(np.mean(gc_time, axis=0)
                                    / self.batch_sizes)
         self.regression()
 
-    def check_lin_dependence(self, threshold=1e-2):
-        if self.n_batches == 1:
-            self.X_y = np.c_[self.X_y[:,:,:1], self.X_y[:, :, -1:]]
-            self.features = self.features[:1]
-            return
-        s = np.linalg.svd(self.X_y[:, :, :-1])[1].sum(axis=0)
-        print(s)
-        if sum(s < threshold):
-            self.X_y = np.c_[self.X_y[:, :, :2], self.X_y[:, :, -1:]]
-            self.features = self.features[:2]
-
-    def init_features(self, gc_collected):
+    def init_features(self, gc_collected, mem):
         n_gc_generations = gc_collected.shape[-1]
         self.with_gc = False
         for i in range(1, n_gc_generations+1):
@@ -56,15 +130,19 @@ class StatMixin(object):
         if n_gc_generations > 0:
             self.with_gc = True
         _shape = (self.n_samples, self.n_batches, 1)
-        self.features = ["batch", "const"] + ["gc_{}".format(i+1)
-                                              for i in range(n_gc_generations)]
-        self.X_y = \
+        feature_names = ["batch", "const", "count", "size"] + \
+                        ["gc_{}".format(i+1)
+                         for i in range(n_gc_generations)]
+        X_y = \
             np.c_[np.array(list([self.batch_sizes])
                            *self.n_samples).reshape(_shape),
                   np.ones(_shape),
+                  mem,
                   gc_collected[:, :, :n_gc_generations],
                   self.full_time.reshape(_shape)]
-        self.check_lin_dependence()
+
+        self.features = Features(feature_names, X_y)
+        self.features.fixed_dependency()
 
     def _init(self, gamma=0.95, type_ci="tquant"):
         self.stat_time = None
@@ -83,7 +161,7 @@ class StatMixin(object):
         except LinAlgError:
             self.regr = None
             self.stat_time = \
-                get_mean_stat(self.X_y[:,:,-1] / self.batch_sizes)
+                get_mean_stat(self.features.X / self.batch_sizes)
         return self.stat_time.val
 
     @property
@@ -119,12 +197,7 @@ class StatMixin(object):
 
     @cached_property
     def X(self):
-        _X = self.X_y[:, :, :-1].mean(axis=0)
-        for i, feature in enumerate(self.features):
-            if feature == "const":
-                _X[:, i] = 1.
-                break
-        return _X
+        return self.features.X.mean(axis=0)
 
     @cached_property
     def y(self):
@@ -137,7 +210,7 @@ class StatMixin(object):
     @cached_property
     def gc_predicted_time(self):
         res = 0
-        for feature, time in zip(self.features, self.features_time):
+        for feature, time in zip(self.feature_names, self.features_time):
             if feature.startswith("gc"):
                 res += time
         return res
@@ -155,6 +228,23 @@ class StatMixin(object):
         return dict(with_gc=self.with_gc,
                     samples=self.n_samples,
                     batches=self.batch_sizes)
+    @cached_property
+    def x_y(self):
+        if self.batch_sizes[0] == 1:
+            return get_mean_stat(self.features.X_y[:, 0, :], **self._ci_params)\
+                .val
+        else:
+            _x_y = np.mean(self.features.X_y / self.batch_sizes[:, np.newaxis],
+                           axis=(0, 1))
+            ind_const = self.features._get_id("const")
+            if ind_const > 0:
+                _x_y[ind_const] = 1.
+            return _x_y
+
+    @property
+    def feature_names(self):
+        return self.features.feature_names
+
 
     def evaluate_stats(self, arr_samples, f_stat, **kwargs):
         stats = [get_statistic(values=sample, f_stat=f_stat, **kwargs)
@@ -164,19 +254,14 @@ class StatMixin(object):
     def regression(self, B=1000, **kwargs):
         indexes = np.random.random_integers(0, self.n_samples-1,
                                             size=(B, self.n_batches))
-        stat_w, arr_st_w = \
-            get_statistic(self.X_y, lin_regression,
+        stat_w, arr_X_y, arr_st_w = \
+            get_statistic(self.features.X_y, lin_regression,
                           with_arr_values=True,
                           bootstrap_kwargs=
                           dict(indexes=(indexes, np.arange(self.n_batches))),
                           **kwargs)
-        self.x_y = np.mean(self.X_y / self.batch_sizes[:, np.newaxis],
-                           axis=(0, 1))
+        self.arr_X_y = arr_X_y
         self.arr_st_w = arr_st_w
-        for i, feature in enumerate(self.features):
-            if feature == "const":
-                self.x_y[i] = 1.
-                break
         arr_st_y = np.array([self.x_y[:-1].dot(w) for w in arr_st_w])
         stat_y = get_mean_stat(arr_st_y, **kwargs)
         return Regression2(stat_w, stat_y)
@@ -239,7 +324,7 @@ def get_statistic(values, f_stat, with_arr_values=False,
             continue
     arr_stat = np.array(arr_stat)
     if with_arr_values:
-        return get_mean_stat(arr_stat, **ci_kwargs), arr_stat
+        return get_mean_stat(arr_stat, **ci_kwargs), arr_values, arr_stat
     return get_mean_stat(arr_stat, **ci_kwargs)
 
 

@@ -77,7 +77,7 @@ class VisualMixin(object):
                 .format(self.ci_params["type_ci"],
                         self.ci_params["gamma"]) if key == "CI" else
                 "Time ({})".format(measure) if key == "Time" else
-                "Features: {}".format(self.features) if key == "Features_time"
+                "Features: {}".format(self.feature_names) if key == "Features_time"
                 else key,
                 table_keys)))
         return pretty_table
@@ -211,25 +211,21 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
     w_measure = time_measures[measure]
     for time_ in bm_res.full_time:
         ax.scatter(batch_sizes_, time_*w_measure, c=c, s=s, alpha=alpha)
-    ax.scatter([],[], c=c,s=s,alpha=alpha, label=label)
+    ax.scatter([], [], c=c, s=s, alpha=alpha, label=label)
 
-    c = mixed_color(c, p=0.35)
+
+    [ax.plot(batch_sizes_, X_y[:,:-1].dot(stat_w)*w_measure,
+            color='r', linewidth=linewidth, alpha=0.15)
+     for X_y, stat_w in zip(bm_res.arr_X_y, bm_res.arr_st_w)]
+
+    # c = mixed_color(c, p=0.35)
     mean_label = "{}_mean".format(label) if len(label) else "mean"
     ax.plot(batch_sizes_, bm_res.y*w_measure,
-            c=c, linewidth=linewidth, label=mean_label)
-    X = bm_res.batch_sizes[:, np.newaxis]*bm_res.x_y[:-1]
-    if X.shape[1] > 1:
-        X[:, 1] = 1.
-    [ax.plot(batch_sizes_, X.dot(stat_w)*w_measure,
-            c='r', linewidth=linewidth, alpha=0.15)
-     for stat_w in bm_res.arr_st_w]
-
-
-    ax.legend()
+            color=c, linewidth=linewidth, label=mean_label)
     if bm_res.stat_w is not None:
         w = bm_res.stat_w.val
         regr_label = "{}_regr, w={}".format(label, w) if len(label) else "regr"
-        ax.plot(batch_sizes_, bm_res.X.dot(w)*w_measure, 'r--', c=c,
+        ax.plot(batch_sizes_, bm_res.X.dot(w)*w_measure, 'r--', color=c,
                 linewidth=linewidth,
                 label=regr_label)
         ax.legend()
@@ -275,7 +271,7 @@ def show_weight_features(bm_res, s=180, alpha=0.4, figsize=(25, 15),
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(1, 1, 1)
     W = bm_res.stat_w.val
-    n_features = len(bm_res.features)
+    n_features = len(bm_res.feature_names)
     cm = plt.get_cmap('gist_rainbow')
     colors = [cm(1.*i/n_features) for i in range(n_features)]
     measure = bm_res.choose_time_measure()
@@ -285,16 +281,16 @@ def show_weight_features(bm_res, s=180, alpha=0.4, figsize=(25, 15),
         w = W[i]
         w_x = w*x*w_measure
         ax.scatter(batch_sizes, w_x, c=c, s=s, alpha=alpha,
-                   label="{}  w={}".format(bm_res.features[i], w).format(i, w))
-        ax.plot(batch_sizes, w_x, c=c)
+                   label="{}  w={}".format(bm_res.feature_names[i], w).format(i, w))
+        ax.plot(batch_sizes, w_x, color=c)
 
     W_from, W_to = bm_res.stat_w.ci.T
-    ax.plot(batch_sizes, bm_res.X.dot(W)*w_measure, c='b', label="regr")
-    ax.plot(batch_sizes, bm_res.X.dot(W_from)*w_measure, 'k--', c='b')
+    ax.plot(batch_sizes, bm_res.X.dot(W)*w_measure, color='b', label="regr")
+    ax.plot(batch_sizes, bm_res.X.dot(W_from)*w_measure, 'k--', color='b')
     ax.plot(batch_sizes, bm_res.X.dot(W_to)*w_measure, 'k--',
-            c='b', label='border_regr')
-    ax.plot(batch_sizes, bm_res.y*w_measure, 'bo', c='r', label="y")
-    ax.plot(batch_sizes, bm_res.y*w_measure, c='r')
+            color='b', label='border_regr')
+    ax.plot(batch_sizes, bm_res.y*w_measure, 'bo', color='r', label="mean")
+    ax.plot(batch_sizes, bm_res.y*w_measure, color='r')
     ax.legend()
     ax.set_xlabel('batch_sizes')
     ax.set_ylabel('time, {}'.format(measure))
@@ -329,7 +325,7 @@ def save_info(res, path=None, path_suffix="", with_plots=True):
         f.write("max_batch {}\nn_batches {}\nn_samples {}\nwith_gc {}\n"
                 .format(res.batch_sizes[-1], res.n_batches, res.n_samples,
                         res.with_gc))
-        f.write("X:  {}\n{}\ny:\n{}\n\n".format(res.features, res.X, res.y))
+        f.write("X:  {}\n{}\ny:\n{}\n\n".format(res.feature_names, res.X, res.y))
         f.write(str(res._repr(with_features=True)))
         f.write("\n\n")
 

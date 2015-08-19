@@ -1,4 +1,5 @@
 import gc
+import tracemalloc
 import numpy as np
 from collections import namedtuple
 from itertools import repeat
@@ -85,24 +86,30 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     """
 
     n_batches = min(max_batch, n_batches)
-
+    # batch_sizes are uniformly distributed on [0, max_batch]
+    # and sorted in ascending order
+    # t.h. batch_sizes[-1] is equal the max_batch
     batch_sizes = \
         np.arange(int(max_batch), 0, -int(max_batch / n_batches))[::-1]
+    # min of bath sizes should be 1
+    if n_batches > 1:
+        batch_sizes[0] = 1
 
-    gc_disable = gc.disable
     gcold = gc.isenabled()
+    gc_disable = gc.disable
     call_back_gc = CallBackGC()
     if with_gc:
         gc.disable = lambda: None
         gc.callbacks.append(call_back_gc)
     else:
         gc.disable()
+
     NoopTime.preprocessing(batch_sizes)
+    NoopMem.prepocessing(batch_sizes)
+
     n_batches = len(batch_sizes)
 
-    features = ["time", "gc_time"] + ["gc_{}".format(i+1)
-                                for i in range(GC_NUM_GENERATIONS)]
-    n_features = len(features)
+    mem = np.zeros((n_samples, n_batches, 2))
     full_time = np.zeros((n_samples, n_batches))
     gc_time = np.zeros((n_samples, n_batches))
     gc_collected = np.zeros((n_samples, n_batches, GC_NUM_GENERATIONS))
@@ -112,6 +119,8 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
             with Pool() as p:
                 full_time[i], gc_time[i], gc_collected[i] = \
                     zip(*p.map(_get_time, zip(repeat(f), batch_sizes)))
+                mem[i] = p.map(_get_mem, zip(repeat(f), batch_sizes))
+
         else:
             full_time[i], gc_time[i], gc_collected[i] = \
                 zip(*list(map(_get_time, zip(repeat(f), batch_sizes))))
@@ -123,6 +132,7 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
         del gc.callbacks[-1]
     return BenchResult(full_time, gc_time=gc_time,
                        gc_collected=gc_collected,
+                       mem=mem,
                        batch_sizes=batch_sizes,
                        func_name=func_name)
 
@@ -185,14 +195,59 @@ class CallBackGC(object):
 
 
 class NoopTime(object):
-    times = {}
+    _time = {}
 
     @staticmethod
     def preprocessing(batch_sizes):
-        NoopTime.times = dict(zip(batch_sizes,
+        NoopTime._time = dict(zip(batch_sizes,
                          [get_time_perf_counter(noop, batch)
                           for batch in batch_sizes]))
+
     @staticmethod
     def time(batch):
-        return NoopTime.times.get(batch, get_time_perf_counter(noop, batch))
+        return NoopTime._time.get(batch, get_time_perf_counter(noop, batch))
 
+
+class NoopMem(object):
+    _mem = {}
+
+    @staticmethod
+    def prepocessing(batch_sizes):
+        is_tracing = tracemalloc.is_tracing()
+        if not is_tracing:
+            tracemalloc.start()
+        NoopMem._mem = dict(zip(batch_sizes,
+                         [get_mem_stats(noop, batch)
+                          for batch in batch_sizes]))
+        if not is_tracing:
+            tracemalloc.stop()
+
+    @staticmethod
+    def mem(batch):
+        return NoopMem._mem.get(batch, get_mem_stats(noop, batch))
+
+
+def count_size(snapshot1, snapshot2, group_by='lineno'):
+    diff_stats = snapshot2.compare_to(snapshot1, group_by)
+    count = sum(diff.count_diff for diff in diff_stats)
+    size = sum(diff.size_diff for diff in diff_stats)
+    return np.array([count, size])
+
+
+def get_mem_stats(f, batch):
+    snapshot1 = tracemalloc.take_snapshot()
+    for i in range(batch):
+        f()
+    snapshot2 = tracemalloc.take_snapshot()
+    return count_size(snapshot1, snapshot2)
+
+
+def _get_mem(args):
+    f, batch = args
+    is_tracing = tracemalloc.is_tracing()
+    if not is_tracing:
+        tracemalloc.start()
+    res = get_mem_stats(f, batch) - NoopMem.mem(batch)
+    if not is_tracing:
+        tracemalloc.stop()
+    return res
