@@ -9,8 +9,7 @@ from scipy.stats import norm
 from .exception import BenchException
 
 Stat = namedtuple("Stat", 'val std ci')
-Regression = namedtuple("Regression", 'X y stat_w stat_y r2')
-Regression2 = namedtuple("Regression2", 'stat_w, stat_y')
+Regression = namedtuple("Regression", 'stat_w, stat_y')
 
 time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
                                 [1, 1e3, 1e6, 1e9]))
@@ -54,8 +53,8 @@ class Features(object):
         return list(filter(lambda x: x.startswith("gc"), self.feature_names))
 
     def _del_id(self, indexes):
-        np.delete(self.X_y, indexes, axis=2)
-        np.delete(self.feature_names, indexes)
+        self.X_y = np.delete(self.X_y, indexes, axis=2)
+        self.feature_names = np.delete(self.feature_names, indexes)
         self._renumbered()
 
     def _indexes(self, features):
@@ -79,7 +78,7 @@ class Features(object):
     def n(self):
         return len(self.feature_names)
 
-    def is_depended(self, X=None, threshold=1e-2):
+    def is_depended(self, X=None, threshold=1e-1):
         if X is None:
             X = self.X
         if X.shape[2] < 2:
@@ -87,16 +86,16 @@ class Features(object):
         s = np.linalg.svd(X)[1].sum(axis=0)
         return sum(s < threshold * len(X))
 
-    def fixed_dependency(self):
+    def fixed_dependency(self, threshold=1e-1):
         if self.X.shape[1] == 1:
             self.delete_all_features_except([self.main_feature])
 
-        if not self.is_depended():
+        if not self.is_depended(threshold=threshold):
             return
 
         for i, feature in enumerate(self.feature_names[::-1]):
             if feature != self.main_feature:
-                dep = self.is_depended(self.get_X_without([feature]))
+                dep = self.is_depended(self.get_X_without([feature]), threshold)
                 if not dep:
                     self.delete([feature])
                     return
@@ -245,12 +244,6 @@ class StatMixin(object):
     def feature_names(self):
         return self.features.feature_names
 
-
-    def evaluate_stats(self, arr_samples, f_stat, **kwargs):
-        stats = [get_statistic(values=sample, f_stat=f_stat, **kwargs)
-                 for sample in arr_samples]
-        return stats
-
     def regression(self, B=1000, **kwargs):
         indexes = np.random.random_integers(0, self.n_samples-1,
                                             size=(B, self.n_batches))
@@ -264,7 +257,7 @@ class StatMixin(object):
         self.arr_st_w = arr_st_w
         arr_st_y = np.array([self.x_y[:-1].dot(w) for w in arr_st_w])
         stat_y = get_mean_stat(arr_st_y, **kwargs)
-        return Regression2(stat_w, stat_y)
+        return Regression(stat_w, stat_y)
 
 
 def mean_and_se(stat_values, stat=None, eps=1e-9):
