@@ -4,7 +4,7 @@ from itertools import repeat
 from functools import partial
 from multiprocessing import Pool
 from .analyse import StatMixin
-from ._gc_time import GC_NUM_GENERATIONS, get_time
+from ._gc_time import get_time
 from .display import VisualMixin, VisualMixinGroup
 from .exception import BenchException
 
@@ -30,18 +30,22 @@ class BenchResult(StatMixin, VisualMixin):
 class GroupResult(VisualMixinGroup):
     def __init__(self, name, results):
         self.name = name
-        self.results = results
+        self.bench_results = results
         res = results[0]
+        self.n_batches = res.n_batches
         self.n_samples = res.n_samples
         self.batch_sizes = res.batch_sizes
-        self.n_batches = res.n_batches
-
-    @property
-    def bench_results(self):
-        return self.results
 
 
 def bench(f, *args, run_params=None, func_name="", **kwargs):
+    """
+    :param f: function which measured
+    :param args: args of f
+    :param run_params: parameters for benchmark
+    :param func_name: function name
+    :param kwargs: kwargs of f
+    :return: Bench
+    """
     if run_params is None:
         run_params = {}
     return Bench(func_name,
@@ -50,10 +54,25 @@ def bench(f, *args, run_params=None, func_name="", **kwargs):
 
 
 def group(name, group, **run_params):
+    """
+    :param name:
+    :param group: list of Benches
+    :param run_params:
+    :return: Group
+    """
     return Group(name, group, run_params)
 
 
 def run(case, *args, **kwargs):
+    """
+    Exec benchmark (_run) for each function in case
+    See description in _run
+    :param case:
+    case = list of cases | Bench | Group
+    :param args: args for _run
+    :param kwargs: kwargs for _run
+    :return:
+    """
     if isinstance(case, Group):
         return GroupResult(case.name, [run(bench, *args,
                                            **dict(kwargs, **case.run_params))
@@ -69,16 +88,23 @@ def run(case, *args, **kwargs):
         raise BenchException("Case must be Bench or Group or list")
 
 
-def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
-         func_name="", multi=True):
+def _run(f, func_name="",
+         n_samples=10, max_batch=100, n_batches=10,
+         with_gc=True, with_callback=True,
+         multi=True):
     """
-    :param f: function without arguments
-    :param n_samples: number of samples
+
+    :param f: function which measured (without arguments)
+    :param func_name: name of function
+    :param n_samples: number of measuring samples (for each batch)
     :param max_batch: maximum of batch size
     :param n_batches: number of batches
-    :param with_gc: {True, False} Garbage Collector
-    :param func_name:
-    :return:
+    :param with_gc: flag for enable/disable Garbage Collector
+    :param with_callback: flag for use/not use callback
+     which measure gc working time (use only with gc, python version >= 3.3)
+    :param multi: flag for use/not use multiprocessing
+    (note: multiprocessing does not work with magic function benchpy)
+    :return: BenchResult
     """
 
     n_batches = min(max_batch, n_batches)
@@ -94,19 +120,22 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
 
     full_time = np.zeros((n_samples, n_batches))
     gc_time = np.zeros((n_samples, n_batches))
-    gc_collected = np.zeros((n_samples, n_batches, GC_NUM_GENERATIONS))
 
     for i in range(n_samples):
         if multi:
             with Pool() as p:
                 full_time[i], gc_time[i] = \
                     zip(*p.map(get_time, zip(repeat(f),
-                                             batch_sizes, repeat(with_gc))))
+                                             batch_sizes,
+                                             repeat(with_gc),
+                                             repeat(with_callback))))
 
         else:
             full_time[i], gc_time[i] = \
                 zip(*list(map(get_time, zip(repeat(f),
-                                            batch_sizes, repeat(with_gc)))))
+                                            batch_sizes,
+                                            repeat(with_gc),
+                                            repeat(with_callback)))))
 
     return BenchResult(full_time,
                        gc_time=gc_time,

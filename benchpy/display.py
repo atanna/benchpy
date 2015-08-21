@@ -21,8 +21,8 @@ class VisualMixin(object):
     def plot(self, **kwargs):
         return _plot_result(self, **kwargs)
 
-    def show_weight_features(self, **kwargs):
-        return show_weight_features(self, **kwargs)
+    def plot_features(self, **kwargs):
+        return plot_features(self, **kwargs)
 
     def save_info(self, *args, **kwargs):
         save_info(self, *args, **kwargs)
@@ -137,8 +137,11 @@ class VisualMixin(object):
 class VisualMixinGroup(object):
     table_keys = VisualMixin.table_keys
 
-    def plot(self):
-        return _plot_group(self)
+    def plot(self, **kwargs):
+        return _plot_group(self, **kwargs)
+
+    def plot_features(self, **kwargs):
+        return plot_features(self, **kwargs)
 
     def _repr(self, table_keys=None, with_empty=True, with_features=True):
         first_res = self.bench_results[0]
@@ -192,7 +195,8 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
                  linewidth=2, add_text=True,
                  save=False, path=None,
                  figsize=(25, 15),
-                 group_plot=False):
+                 group_plot=False,
+                 **kwargs):
     if c is None:
         c = np.array([[0], [0.], [0.75]])
 
@@ -244,7 +248,7 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
 
 
 def _plot_group(gr_res, labels=None, figsize=(25, 15),
-                separate=False,
+                separate=False, save=False, path=None,
                 **kwargs):
     if separate:
         return [res.plot(figsize=figsize, **kwargs) for
@@ -270,11 +274,22 @@ def _plot_group(gr_res, labels=None, figsize=(25, 15),
         fig = _plot_result(res, group_plot=True,
                            **d)
         add_text = False
+    if save:
+        save_plot(fig, path=path)
     return fig
 
 
-def show_weight_features(bm_res, s=180, alpha=0.4, figsize=(25, 15),
-                         save=False, path=None):
+def plot_features(bm_res, s=180, alpha=0.4, figsize=(25, 15),
+                         save=False, path=None, **kwargs):
+    from .run import GroupResult
+    if isinstance(bm_res, GroupResult):
+        if path is None:
+            path = "features.jpg"
+        name, ext = os.path.splitext(path)
+        for i, res in enumerate(bm_res.bench_results):
+            plot_features(res, s, alpha, figsize, save,
+                                 "{}{}{}".format(name, i, ext))
+        return
     batch_sizes = bm_res.batch_sizes
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(1, 1, 1)
@@ -318,31 +333,41 @@ def mixed_color(c0, c1=None, p=0.5):
 def save_plot(fig, path=None, figsize=(25,15)):
     fig.set_size_inches(*figsize)
     if path is None:
-        path="plot.jpg"
+        path = "plot.jpg"
     fig.savefig("{}".format(path))
     return path
 
 
-def save_info(res, path=None, path_suffix="", with_plots=True):
+def save_info(res, path=None, path_suffix="", with_plots=True, plot_params=None):
     if path is None:
         path = "res_info"
+    if plot_params is None:
+        plot_params = {}
+    if isinstance(res, list):
+        for i, _res in enumerate(res):
+            save_info(_res, "{}/{}".format(path, i), path_suffix, with_plots)
+        return
     if path_suffix:
         path_suffix = "_" + path_suffix
     os.makedirs(path, exist_ok=True)
     with open("{}/info{}".format(path, path_suffix), "a") as f:
         f.write("{}\n".format(res.name.capitalize()))
-        f.write("max_batch {}\nn_batches {}\nn_samples {}\nwith_gc {}\n"
-                .format(res.batch_sizes[-1], res.n_batches, res.n_samples,
-                        res.with_gc))
-        f.write("batch_sizes: {}\n".format(res.batch_sizes))
-        f.write("X:  {}\n{}\ny:\n{}\n\n".format(res.feature_names, res.X, res.y))
+        from .run import BenchResult
+        if isinstance(res, BenchResult):
+            f.write("max_batch {}\nn_batches {}\nn_samples {}\nwith_gc {}\n"
+                    .format(res.batch_sizes[-1], res.n_batches, res.n_samples,
+                            res.with_gc))
+            f.write("batch_sizes: {}\n".format(res.batch_sizes))
+            f.write("X:  {}\n{}\ny:\n{}\n\n".format(res.feature_names,
+                                                    res.X, res.y))
         f.write(str(res._repr(with_features=True)))
         f.write("\n\n")
 
     if with_plots:
-        res.plot(save=True, path="{}/plot{}.jpg".format(path, path_suffix))
-        res.show_weight_features(save=True,
-                                 path="{}/features{}.jpg"
-                                 .format(path, path_suffix))
+        res.plot(save=True, path="{}/plot{}.jpg".format(path, path_suffix),
+                 **plot_params)
+        res.plot_features(save=True,
+                          path="{}/features{}.jpg".format(path, path_suffix),
+                          **plot_params)
 
 

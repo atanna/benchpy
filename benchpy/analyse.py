@@ -1,4 +1,3 @@
-import functools
 import numpy as np
 from cached_property import cached_property
 from collections import namedtuple, OrderedDict
@@ -10,9 +9,6 @@ from .exception import BenchException
 
 Stat = namedtuple("Stat", 'val std ci')
 Regression = namedtuple("Regression", 'stat_w, stat_y')
-
-time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
-                                [1, 1e3, 1e6, 1e9]))
 
 
 def const_stat(x):

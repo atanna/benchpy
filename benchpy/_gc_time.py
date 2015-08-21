@@ -3,8 +3,6 @@ import numpy as np
 from time import perf_counter
 from .timed_eval import get_time_perf_counter
 
-GC_NUM_GENERATIONS = 3
-
 
 def noop_time_preprocessing(batch_sizes):
     return dict(zip(batch_sizes,
@@ -72,13 +70,13 @@ class gc_manager(object):
 
 
 def get_time(args):
-    f, batch, with_gc = args
+    f, batch, with_gc, with_callback = args
     _warm_up(f)
-    with gc_manager(with_gc, with_gc) as callback:
+    with gc_manager(with_gc, with_callback) as callback:
         time = max(get_time_perf_counter(f, batch) - noop_time(batch), 0.)
-        gc_time = callback.time()
-
-    return time, gc_time
+        if with_callback:
+            return time, callback.time()
+    return time, 0
 
 
 def noop(*args, **kwargs):
