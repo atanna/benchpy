@@ -16,7 +16,6 @@ class VisualMixin(object):
     table_keys = ['Name', 'Time', 'CI', 'Features_time',
                   'Std', 'Min', 'Max',
                   'gc_time', 'Time_without_gc',
-                  'gc_predicted_time', 'Time_without_gc_pred',
                   'fit_info']
 
     def plot(self, **kwargs):
@@ -53,8 +52,6 @@ class VisualMixin(object):
                      Features_time=self.features_time * w,
                      gc_time=self.gc_time * w,
                      Time_without_gc=(self.time - self.gc_time) * w,
-                     gc_predicted_time=self.gc_predicted_time * w,
-                     Time_without_gc_pred=self.time_without_gc_pred * w,
                      fit_info=fit_info)
         return table
 
@@ -77,7 +74,9 @@ class VisualMixin(object):
                 .format(self.ci_params["type_ci"],
                         self.ci_params["gamma"]) if key == "CI" else
                 "Time ({})".format(measure) if key == "Time" else
-                "Features: {}".format(self.feature_names) if key == "Features_time"
+                "Features: {}".format(self.feature_names)
+                if key == "Features_time" else
+                "predicted time without gc" if key == "Time_without_gc"
                 else key,
                 table_keys)))
         return pretty_table
@@ -91,8 +90,6 @@ class VisualMixin(object):
         if with_gc:
             table_keys.append("gc_time")
             table_keys.append("Time_without_gc")
-            table_keys.append("gc_predicted_time")
-            table_keys.append("Time_without_gc_pred")
         return table_keys
 
     def _repr(self, table_keys=None, with_empty=True,
@@ -194,7 +191,8 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
                  title="", s=180, shift=0., alpha=0.2,
                  linewidth=2, add_text=True,
                  save=False, path=None,
-                 figsize=(25, 15)):
+                 figsize=(25, 15),
+                 group_plot=False):
     if c is None:
         c = np.array([[0], [0.], [0.75]])
 
@@ -213,12 +211,15 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
         ax.scatter(batch_sizes_, time_*w_measure, c=c, s=s, alpha=alpha)
     ax.scatter([], [], c=c, s=s, alpha=alpha, label=label)
 
-
+    _alpha = 0.15
+    color = 'r'
+    if group_plot:
+        _alpha = 0.10
+        color = mixed_color(c, p=0.3)
     [ax.plot(batch_sizes_, X_y[:,:-1].dot(stat_w)*w_measure,
-            color='r', linewidth=linewidth, alpha=0.15)
+             color=color, linewidth=linewidth, alpha=_alpha)
      for X_y, stat_w in zip(bm_res.arr_X_y, bm_res.arr_st_w)]
 
-    # c = mixed_color(c, p=0.35)
     mean_label = "{}_mean".format(label) if len(label) else "mean"
     ax.plot(batch_sizes_, bm_res.y*w_measure,
             color=c, linewidth=linewidth, label=mean_label)
@@ -242,14 +243,20 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
     return fig
 
 
-def _plot_group(gr_res, labels=None, figsize=(25, 15), **kwargs):
+def _plot_group(gr_res, labels=None, figsize=(25, 15),
+                separate=False,
+                **kwargs):
+    if separate:
+        return [res.plot(figsize=figsize, **kwargs) for
+                res in gr_res.bench_results]
+
     list_res = gr_res.bench_results
     n_res = len(gr_res.bench_results)
     if labels is None:
         labels = list(range(n_res))
         for i, res in enumerate(list_res):
-            if len(res.func_name):
-                labels[i] = res.func_name
+            if len(res.name):
+                labels[i] = res.name
 
     batch_shift = 0.15 / n_res
     fig = plt.figure(figsize=figsize)
@@ -260,7 +267,8 @@ def _plot_group(gr_res, labels=None, figsize=(25, 15), **kwargs):
                  c=np.random.rand(3, 1), add_text=add_text,
                  shift=batch_shift * i)
         d.update(kwargs)
-        fig = _plot_result(res, **d)
+        fig = _plot_result(res, group_plot=True,
+                           **d)
         add_text = False
     return fig
 
@@ -281,7 +289,8 @@ def show_weight_features(bm_res, s=180, alpha=0.4, figsize=(25, 15),
         w = W[i]
         w_x = w*x*w_measure
         ax.scatter(batch_sizes, w_x, c=c, s=s, alpha=alpha,
-                   label="{}  w={}".format(bm_res.feature_names[i], w).format(i, w))
+                   label="{}  w={}".format(bm_res.feature_names[i], w)
+                   .format(i, w))
         ax.plot(batch_sizes, w_x, color=c)
 
     W_from, W_to = bm_res.stat_w.ci.T
@@ -325,6 +334,7 @@ def save_info(res, path=None, path_suffix="", with_plots=True):
         f.write("max_batch {}\nn_batches {}\nn_samples {}\nwith_gc {}\n"
                 .format(res.batch_sizes[-1], res.n_batches, res.n_samples,
                         res.with_gc))
+        f.write("batch_sizes: {}\n".format(res.batch_sizes))
         f.write("X:  {}\n{}\ny:\n{}\n\n".format(res.feature_names, res.X, res.y))
         f.write(str(res._repr(with_features=True)))
         f.write("\n\n")

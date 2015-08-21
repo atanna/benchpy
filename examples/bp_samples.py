@@ -217,7 +217,7 @@ def features_sample():
 
 
 def get_path(name, params, max_batch, n_batches, n_samples):
-    dir_results = "results_with_mem2"
+    dir_results = "results_"
     path = "{dir_res}/{name}/{params}/" \
            "{max_batch}_{n_batches}_{n_samples}/{folder}/"\
         .format(dir_res=dir_results,
@@ -247,13 +247,15 @@ def sample(f, *params, name=None,
                     max_batch=max_batch,
                     n_batches=n_batches)
 
-    res = bp.bench(f, *params, run_params=run_params, func_name=name+"with gc")\
+    res = bp.bench(f, *params, run_params=run_params,
+                   func_name=name+"with gc")\
         .run()
     res.save_info(path, "gc")
     print(res)
 
     run_params["with_gc"] = False
-    res = bp.bench(f, *params, run_params=run_params, func_name=name+"without gc").run()
+    res = bp.bench(f, *params, run_params=run_params,
+                   func_name=name+"without gc").run()
     res.save_info(path)
     print(res)
 
@@ -261,7 +263,7 @@ def sample(f, *params, name=None,
 if __name__ == "__main__":
     # features_sample()
     # html_sample()
-    # factorial_sample()
+    # factorial_sample(True)
     # cycle_list_sample()
     # cycle_sample(True)
     # noop_sample()
@@ -270,8 +272,8 @@ if __name__ == "__main__":
     # sleep_sample(1e-2)
     # sample(time.sleep, 5e-3, max_batch=100, n_batches=100, n_samples=20)
     # sample(cycle_and_sleep, 100, 1e-2, max_batch=50, n_batches=50, n_samples=80)
-    sample(cycle_and_sleep, 100, 1e-3, max_batch=45, n_batches=45, n_samples=40)
-    # sample(cycle_and_sleep, 100, 1e-9, max_batch=35, n_batches=35, n_samples=15)
-    # sample(cycle_list, 100, max_batch=15, n_batches=10, n_samples=10)
+    # sample(cycle_and_sleep, 100, 1e-3, max_batch=45, n_batches=45, n_samples=40)
+    # sample(cycle_and_sleep, 100, 1e-3, max_batch=100, n_batches=80, n_samples=80)
+    sample(cycle_list, 100, max_batch=150, n_batches=100, n_samples=100)
 
 

@@ -23,14 +23,6 @@ def _warm_up(f, n=2):
         f()
 
 
-def _diff_stats(gc_stats0, gc_stats1):
-    res = np.zeros(GC_NUM_GENERATIONS)
-    key = "collected"
-    for i, st0, st1 in zip(range(GC_NUM_GENERATIONS), gc_stats0, gc_stats1):
-        res[i] = st1[key] - st0[key]
-    return res
-
-
 class CallBackGC(object):
     def __init__(self):
         self.starts = []
@@ -83,13 +75,10 @@ def get_time(args):
     f, batch, with_gc = args
     _warm_up(f)
     with gc_manager(with_gc, with_gc) as callback:
-        prev_stats = gc.get_stats()
-        time = max(get_time_perf_counter(f, batch) - noop_time(batch),
-                   0.)
-        gc_diff = _diff_stats(prev_stats, gc.get_stats())
+        time = max(get_time_perf_counter(f, batch) - noop_time(batch), 0.)
         gc_time = callback.time()
 
-    return time, gc_time, gc_diff
+    return time, gc_time
 
 
 def noop(*args, **kwargs):

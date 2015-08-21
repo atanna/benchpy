@@ -5,7 +5,6 @@ from functools import partial
 from multiprocessing import Pool
 from .analyse import StatMixin
 from ._gc_time import GC_NUM_GENERATIONS, get_time
-from ._mem import get_mem
 from .display import VisualMixin, VisualMixinGroup
 from .exception import BenchException
 
@@ -91,10 +90,8 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     # min of bath sizes should be 1
     if n_batches > 1:
         batch_sizes[0] = 1
-
     n_batches = len(batch_sizes)
 
-    mem = np.zeros((n_samples, n_batches, 2))
     full_time = np.zeros((n_samples, n_batches))
     gc_time = np.zeros((n_samples, n_batches))
     gc_collected = np.zeros((n_samples, n_batches, GC_NUM_GENERATIONS))
@@ -102,19 +99,19 @@ def _run(f, n_samples=10, max_batch=100, n_batches=10, with_gc=True,
     for i in range(n_samples):
         if multi:
             with Pool() as p:
-                full_time[i], gc_time[i], gc_collected[i] = \
-                    zip(*p.map(get_time, zip(repeat(f), batch_sizes, repeat(with_gc))))
-                mem[i] = p.map(get_mem, zip(repeat(f), batch_sizes, repeat(with_gc)))
+                full_time[i], gc_time[i] = \
+                    zip(*p.map(get_time, zip(repeat(f),
+                                             batch_sizes, repeat(with_gc))))
 
         else:
-            full_time[i], gc_time[i], gc_collected[i] = \
-                zip(*list(map(get_time, zip(repeat(f), batch_sizes, repeat(with_gc)))))
-            mem[i] = list(map(get_mem, zip(repeat(f), batch_sizes, repeat(with_gc))))
+            full_time[i], gc_time[i] = \
+                zip(*list(map(get_time, zip(repeat(f),
+                                            batch_sizes, repeat(with_gc)))))
 
-    return BenchResult(full_time, gc_time=gc_time,
-                       gc_collected=gc_collected,
-                       mem=mem,
+    return BenchResult(full_time,
+                       gc_time=gc_time,
                        batch_sizes=batch_sizes,
+                       with_gc=with_gc,
                        func_name=func_name)
 
 
