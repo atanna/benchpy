@@ -118,26 +118,35 @@ class Features(object):
 class StatMixin(object):
     def __init__(self, full_time, batch_sizes, with_gc,
                  gc_time=None, func_name="", gamma=0.95, type_ci="tquant"):
-        self.n_samples, self.n_batches = full_time.shape
         self.full_time = full_time
+        self.n_samples, self.n_batches = full_time.shape
         self.batch_sizes = batch_sizes
         self.with_gc = with_gc
         self.name = func_name
-        self._init(gamma,  type_ci, gc_time)
-        self.init_features()
+        self._init(gamma,  type_ci)
+        self.init_features(full_time, gc_time)
 
-    def init_features(self):
-        self.features = Features(["batch", "const"],
-                                 [self.batch_sizes, 1.],
-                                 y=self.full_time)
-
-    def _init(self, gamma=0.95, type_ci="tquant", gc_time=None):
-        self.stat_time = None
-        self.regr = None
-        self._ci_params = dict(gamma=gamma, type_ci=type_ci)
+    def init_features(self, full_time, gc_time=None, alpha=0.4, threshold=10):
+        y = full_time
+        if self.n_samples > threshold:
+            order = full_time.argsort(axis=0)
+            ind = (order, range(full_time.shape[1]))
+            self.n_used_samples = max(threshold, (int(alpha*self.n_samples)))
+            y = full_time[ind][:self.n_used_samples]
+            if gc_time is not None:
+                gc_time = gc_time[ind][:self.n_used_samples]
         if gc_time is not None:
             self.gc_time = np.mean(np.mean(gc_time, axis=0)
                                    / self.batch_sizes)
+        self.features = Features(["batch", "const"],
+                                 [self.batch_sizes, 1.],
+                                 y=y)
+
+    def _init(self, gamma=0.95, type_ci="tquant"):
+        self.stat_time = None
+        self.regr = None
+        self._ci_params = dict(gamma=gamma, type_ci=type_ci)
+
 
     @cached_property
     def time(self):
@@ -174,7 +183,7 @@ class StatMixin(object):
 
     @cached_property
     def _av_time(self):
-        return self.full_time / self.batch_sizes[:, np.newaxis].T
+        return self.features.y / self.batch_sizes[:, np.newaxis].T
 
     @property
     def stat_w(self):
@@ -188,7 +197,7 @@ class StatMixin(object):
 
     @cached_property
     def y(self):
-        return self.full_time.mean(axis=0)
+        return self.features.y.mean(axis=0)
 
     @cached_property
     def features_time(self):
@@ -222,7 +231,8 @@ class StatMixin(object):
         return self.features.feature_names
 
     def regression(self, B=1000, **kwargs):
-        indexes = np.random.random_integers(0, self.n_samples-1,
+        n_samples = len(self.features.X_y)
+        indexes = np.random.random_integers(0, n_samples-1,
                                             size=(B, self.n_batches))
         stat_w, arr_X_y, arr_st_w = \
             get_statistic(self.features.X_y, lin_regression,

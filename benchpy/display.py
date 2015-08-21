@@ -354,8 +354,11 @@ def save_info(res, path=None, path_suffix="", with_plots=True, plot_params=None)
         f.write("{}\n".format(res.name.capitalize()))
         from .run import BenchResult
         if isinstance(res, BenchResult):
-            f.write("max_batch {}\nn_batches {}\nn_samples {}\nwith_gc {}\n"
-                    .format(res.batch_sizes[-1], res.n_batches, res.n_samples,
+            f.write("max_batch {}\nn_batches {}\nn_samples {}  ({})\n"
+                    "with_gc {}\n"
+                    .format(res.batch_sizes[-1],
+                            res.n_batches,
+                            res.n_samples, res.__dict__.get('n_used_samples'),
                             res.with_gc))
             f.write("batch_sizes: {}\n".format(res.batch_sizes))
             f.write("X:  {}\n{}\ny:\n{}\n\n".format(res.feature_names,
