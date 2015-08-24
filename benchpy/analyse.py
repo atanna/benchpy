@@ -1,18 +1,13 @@
 import numpy as np
 from cached_property import cached_property
-from collections import namedtuple, OrderedDict
+from collections import namedtuple
 from numpy.linalg import LinAlgError
 from scipy.optimize import nnls
 from scipy.stats.mstats import mquantiles
-from scipy.stats import norm
 from .exception import BenchException
 
 Stat = namedtuple("Stat", 'val std ci')
-Regression = namedtuple("Regression", 'stat_w, stat_y')
-
-
-def const_stat(x):
-    return Stat(x, 0., np.array([x, x]))
+Regression = namedtuple("Regression", 'stat_w stat_y r2')
 
 
 class Features(object):
@@ -179,7 +174,7 @@ class StatMixin(object):
 
     @cached_property
     def max(self):
-        return np.max(self._av_time)
+        return np.max(self.full_time / self.batch_sizes[:, np.newaxis].T)
 
     @cached_property
     def _av_time(self):
@@ -204,6 +199,12 @@ class StatMixin(object):
         return self.x_y[:-1] * self.regr.stat_w.val
 
     @property
+    def r2(self):
+        if self.regr is None:
+            self.time()
+        return self.regr.r2
+
+    @property
     def ci_params(self):
         return self._ci_params
 
@@ -213,7 +214,7 @@ class StatMixin(object):
                     samples=self.n_samples,
                     batches=self.batch_sizes)
 
-    @cached_property
+    @property
     def x_y(self):
         if self.batch_sizes[0] == 1:
             return get_mean_stat(self.features.X_y[:, 0, :], **self._ci_params)\
@@ -244,29 +245,43 @@ class StatMixin(object):
         self.arr_st_w = arr_st_w
         arr_st_y = np.array([self.x_y[:-1].dot(w) for w in arr_st_w])
         stat_y = get_mean_stat(arr_st_y, **kwargs)
-        return Regression(stat_w, stat_y)
+
+        w = stat_w.val
+        w_r2 = np.array([r2(self.features.y, X.dot(w))
+                         for X in self.features.X]).mean()
+        return Regression(stat_w, stat_y, w_r2)
 
 
-def mean_and_se(stat_values, stat=None, eps=1e-9):
+def _mean_and_se(stat_values, stat=None, eps=1e-9):
     """
-    :param stat_values:
-    :param stat:
-    :param eps:
+    Method for bootstrapping
+    Count mean and se. Use statistic in the bootstrap samples
+    :param stat_values: statistic values in the bootstrap samples
+    :param stat: statistic value in the full sample
+    :param eps: we use eps to define se when it has zero value
+    (to avoid ZeroDivisionError).
     :return: (mean(stat_values), se(stat_values))
     """
     mean_stat = np.mean(stat_values, axis=0)
-    if stat is not None:
-        mean_stat = 2 * stat - mean_stat
     n = len(stat_values)
     se_stat = np.std(stat_values, axis=0) * np.sqrt(n / (n-1))
     if type(se_stat) is np.ndarray:
         se_stat[se_stat < eps] = eps
     else:
         se_stat = max(se_stat, eps)
+    if stat is not None:
+        mean_stat = 2 * stat - mean_stat
     return mean_stat, se_stat
 
 
 def lin_regression(X, y=None, alpha=0.15):
+    """
+    Solve ``argmin_w || Xw - y ||_2 + alpha||w||_2`` for ``w>=0``.
+    :param X:
+    :param y: if y is None, we use last column of X as y
+    :param alpha:
+    :return: w
+    """
     if y is None:
         _X, _y = X[:, :-1], X[:, -1]
     else:
@@ -278,6 +293,16 @@ def lin_regression(X, y=None, alpha=0.15):
 
 
 def bootstrap(X, B=1000, indexes=None, **kwargs):
+    """
+    Return new `B` samples, where every sample has n elements and i-th element
+    of sample be chosen from i-th column of the matrix X,
+    where (n,m) is X shape.
+    If indexes is not None, we return X[indexes]
+    :param X: matrix for bootstrapping
+    :param B: number of samples (useful only if indexes is None)
+    :param indexes:
+    :param kwargs:
+    """
     n = len(X)
     if indexes is None:
         indexes = np.random.random_integers(0, n-1, size=(B, n))
@@ -288,10 +313,14 @@ def get_statistic(values, f_stat, with_arr_values=False,
                   bootstrap_kwargs=None,
                   **ci_kwargs):
     """
-    Return class Stat with statistic, std, confidence interval
+    ``\hat(theta|values) = f_stat(values)``
+    Count estimation of statistic ``theta`` (with confidence interval and se)
+    on values using bootstrapping.
     :param values:
-    :param f_stat: f_stat(sample) = statistic on sample
-    :return:
+    :param f_stat: function for `\theta` estimation
+    :param with_arr_values: flag to return bootstrap samples
+    :param bootstrap_kwargs: parameters for bootstrapping
+    :param ci_kwargs: parameters for confidence interval.
     """
     if bootstrap_kwargs is None:
         bootstrap_kwargs = {}
@@ -302,20 +331,25 @@ def get_statistic(values, f_stat, with_arr_values=False,
             arr_stat.append(f_stat(_values))
         except:
             continue
+
+    mean_val = None
+    try:
+        mean_val = f_stat(values)
+    except:
+        pass
     arr_stat = np.array(arr_stat)
     if with_arr_values:
-        return get_mean_stat(arr_stat, **ci_kwargs), arr_values, arr_stat
-    return get_mean_stat(arr_stat, **ci_kwargs)
+        return get_mean_stat(arr_stat, mean_val=mean_val, **ci_kwargs), \
+               arr_values, arr_stat
+    return get_mean_stat(arr_stat, mean_val=mean_val, **ci_kwargs)
 
 
 def get_mean_stat(values, type_ci="efr", **kwargs):
     if len(values) == 1:
-        return const_stat(values[0])
+        return _const_stat(values[0])
     dict_ci = dict(efr=mean_stat_efr,
                    quant=mean_stat_quant,
-                   tquant=mean_stat_tquant,
-                   hard_efron=mean_stat_hard_efron,
-                   hard_efron2=mean_stat_hard_efron2)
+                   tquant=mean_stat_tquant)
     if type_ci in dict_ci:
         return dict_ci[type_ci](values, **kwargs)
     else:
@@ -329,25 +363,25 @@ def r2(y_true, y_pred):
         else np.inf * (1 - np.mean((y_true-y_pred)**2))
 
 
-def mean_stat_efr(arr, gamma=0.95):
+def mean_stat_efr(arr, gamma=0.95, mean_val=None):
     alpha = (1-gamma) / 2
-    return Stat(*mean_and_se(np.array(arr)),
+    return Stat(*_mean_and_se(np.array(arr), mean_val),
                 ci=np.array(mquantiles(arr, prob=[alpha, 1-alpha],
                                        axis=0).T))
 
 
-def mean_stat_quant(arr, gamma=0.95):
+def mean_stat_quant(arr, gamma=0.95, mean_val=None):
     alpha = (1-gamma) / 2
-    mean_stat, se_stat = mean_and_se(arr)
+    mean_stat, se_stat = _mean_and_se(arr, mean_val)
     q = np.array(mquantiles(arr-mean_stat,
                             prob=[alpha, 1-alpha], axis=0))
     return Stat(mean_stat, se_stat,
                 np.array([mean_stat-q[1], mean_stat-q[0]]).T)
 
 
-def mean_stat_tquant(arr, gamma=0.95):
+def mean_stat_tquant(arr, gamma=0.95, mean_val=None):
     alpha = (1-gamma) / 2
-    mean_stat, se_stat = mean_and_se(arr)
+    mean_stat, se_stat = _mean_and_se(arr, mean_val)
     q = np.array(mquantiles((arr-mean_stat) / se_stat,
                             prob=[alpha, 1-alpha],
                             axis=0))
@@ -356,35 +390,5 @@ def mean_stat_tquant(arr, gamma=0.95):
                           mean_stat - se_stat * q[0]]).T)
 
 
-def _get_z_alph(a, z_0, alpha):
-    _z_alpa = norm.ppf(alpha)
-    return z_0 + (z_0 + _z_alpa) / (1 - a * (z_0 + _z_alpa))
-
-
-def mean_stat_hard_efron(arr, gamma=0.95, **bootstrap_kwargs):
-    alpha = (1-gamma) / 2
-    mean_x = np.mean(arr)
-    a = 1./6 * np.sum((arr-mean_x) ** 3) / \
-        (np.sum((arr-mean_x)**2) ** (3/2))
-    X_b = bootstrap(arr, **bootstrap_kwargs)
-    stat_b = np.array(X_b).mean(axis=1)
-    mean_stat, se_stat = mean_and_se(stat_b)
-    stat_b.sort()
-    n = len(stat_b)
-    z_0 = norm.ppf(stat_b.searchsorted(mean_stat) / n)
-    ci = mquantiles(stat_b, prob=[norm.cdf(_get_z_alph(a, z_0, alpha)),
-                                  norm.cdf(_get_z_alph(a, z_0, 1-alpha))])
-    return Stat(mean_stat, se_stat, ci)
-
-
-def mean_stat_hard_efron2(arr, gamma=0.95):
-    alpha = (1-gamma) / 2
-    mean_x = np.mean(arr)
-    a = 1./6 * np.sum((arr-mean_x) ** 3) / (
-        np.sum((arr-mean_x)**2) ** (3 / 2))
-    _z_alpha = norm.ppf(alpha)
-    _z_alpha2 = norm.ppf(1 - alpha)
-    sigma = arr.std()
-    q1 = sigma * (_z_alpha + a*(2*_z_alpha**2 + 1))
-    q2 = sigma * (_z_alpha2 + a*(2*_z_alpha2**2 + 1))
-    return Stat(mean_x, sigma, [mean_x+q1, mean_x+q2])
+def _const_stat(x):
+    return Stat(x, 0., np.array([x, x]))

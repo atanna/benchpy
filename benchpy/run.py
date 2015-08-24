@@ -65,8 +65,8 @@ def group(name, group, **run_params):
 
 def run(case, *args, **kwargs):
     """
-    Exec benchmark (_run) for each function in case
-    See description in _run
+    Exec benchmark for each function in case
+    See _run's description
     :param case:
     case = list of cases | Bench | Group
     :param args: args for _run

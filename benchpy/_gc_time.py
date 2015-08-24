@@ -11,6 +11,12 @@ def noop_time_preprocessing(batch_sizes):
 
 
 def noop_time(batch, dict_noop_time=None):
+    """
+    Return time of empty function, which has run batch times.
+    :param batch:
+    :param dict_noop_time:
+    :return:
+    """
     if dict_noop_time is None:
         dict_noop_time = {}
     return dict_noop_time.get(batch, get_time_perf_counter(noop, batch))
@@ -70,6 +76,15 @@ class gc_manager(object):
 
 
 def get_time(args):
+    """
+    Return time of running function `f` the `batch` times.
+    :param args: tuple with
+    f - function,
+    batch - number of the executions in cycle
+    with_gc - flag to enable/disable Garbage Collector
+    with_callback - flag to use callback function which evaluate
+    collections time (useful only with python version >= 3.3)
+    """
     f, batch, with_gc, with_callback = args
     _warm_up(f)
     with gc_manager(with_gc, with_callback) as callback:

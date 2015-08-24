@@ -1,9 +1,7 @@
+import pylab as plt
 from functools import partial
 from IPython import get_ipython
-import pylab as plt
 from IPython.core.magic import magics_class, Magics, line_cell_magic
-from .display import plot_results
-from .exception import BenchException
 
 
 @magics_class
@@ -12,7 +10,7 @@ class ExecutionMagics(Magics):
     def benchpy(self, parameter_s='', cell=None):
         """
         Run benchpy.run
-        %benchpy [[-i] -g<G> -m<M> -n<N> [-p] -s<S>] statement
+        %benchpy [[-i] [-g] [-n <N>] [-m <M>] [-p] [-r <R>] [-t <T>] -s<S>] statement
         where statement is Bench or Group or list with benches
         %%benchpy [[-i] -g<G> -m<M> -n<N> [-p] -s<S>]
           long description of statement
@@ -25,68 +23,70 @@ class ExecutionMagics(Magics):
         Default: 'False'.
 
         -n<N>: set maximum of batch size <N> (max_batch=<N>).
-        Default: 100.
+        Default: 10.
 
         -m<M>: set number of batches for fitting regression <M> (n_batches=<M>).
-        Default: 5.
-        batch_sizes = [1, 1+<N>/<M>, 1+2<N>/<M>, ...]
+        Default: 10.
+        batch_sizes = [1, ...,M-2<M>/<N>, M-<M>/<N>, <M>]
 
-        -p: show plot with regression.
+        -p: show plots with regression.
 
         -r<R>: repeat the loop iteration <R> (n_samples=<R>).
         Default 5.
 
         -t<T>: choose columns <T> to represent result.
-        <T> = [n][t][c][s][m][M][r][g][f]
-        (n='Name', t='Time', c='CI', s='Std', m='Min', M='Max', r='R2',
-        g='gc_collections', f='fit_info')
+        <T> = [t][c][f][s][m][M][r][g][i]
+        where
+        t='Time'
+        c='CI' - confidence interval
+        f='Features_time' - time for each regression parameter
+        s='Std' - standard deviation for regression parameter (which means time)
+        m='Min' - minimum of the time values
+        M='Max' - maximum
+        r="R2" - r2 regression score
+        g='gc_time' - time for gc collections (useful only with python version >= 3.3)
+        i='fit_info' - fitting information
 
         Default - default in repr.
 
         Examples
         --------
         ::
-            In [1]: import benchpy as bp
+        In [1]: import benchpy as bp
 
-            In [2]: def f(a, b): return a + b
+        In [2]: %benchpy 10**10000
+        +--------------+-------------------------------+-------------------------------+
+        |  Time (µs)   |        CI_tquant[0.95]        |  Features: ['batch' 'const']  |
+        +--------------+-------------------------------+-------------------------------+
+        | 225.33965124 | [ 210.72239262  239.54741751] | [ 177.29140495   48.04824629] |
+        +--------------+-------------------------------+-------------------------------+
 
-            In [3]: %benchpy f(69, 96)
+        In [3]: %benchpy -t tcsrmM 10**10000
+        +---------------+-------------------------------+---------------+----------------+---------------+---------------+
+        |   Time (µs)   |        CI_tquant[0.95]        |      Std      |       R2       |      Min      |      Max      |
+        +---------------+-------------------------------+---------------+----------------+---------------+---------------+
+        | 226.600298929 | [ 213.60009798  240.16961693] | 7.00210625405 | 0.999999184569 | 179.693800055 | 226.248999752 |
+        +---------------+-------------------------------+---------------+----------------+---------------+---------------+
 
-            +--------------+---------------------------+
-            |  Time (µs)   |      CI_tquant[0.95]      |
-            +--------------+---------------------------+
-            | 8.9438093954 | [ 8.30582379  9.22444996] |
-            +--------------+---------------------------+
+        In [4]: def cycles(n):
+           ...:     for i in range(n):
+           ...:         arr = []
+           ...:         arr.append(arr)
+           ...:
 
-            In [4]: %benchpy -t tcsr f(69, 96)
+        In [9]: %benchpy -n 1000 cycles(100)
+        +---------------+-----------------------------+-----------------------------+
+        |   Time (µs)   |       CI_tquant[0.95]       | Features: ['batch' 'const'] |
+        +---------------+-----------------------------+-----------------------------+
+        | 23.3943861198 | [  0.          25.96065552] | [ 20.87035101   2.52403511] |
+        +---------------+-----------------------------+-----------------------------+
 
-            +---------------+---------------------------+----------------+----------------+
-            |   Time (µs)   |      CI_tquant[0.95]      |      Std       |       R2       |
-            +---------------+---------------------------+----------------+----------------+
-            | 9.13863231924 | [ 7.59629832  9.79898779] | 0.589640927153 | 0.999972495022 |
-            +---------------+---------------------------+----------------+----------------+
-
-            In [5]: def cycles(n):
-                      for i in range(n):
-                        arr = []
-                        arr.append(arr)
-
-            In [6]: %benchpy -g cycles(100)
-
-            +---------------+-----------------------------+----------------+
-            |   Time (µs)   |       CI_tquant[0.95]       | gc_collections |
-            +---------------+-----------------------------+----------------+
-            | 29.4959616407 | [ 28.64601155  30.4106039 ] | 0.117333333333 |
-            +---------------+-----------------------------+----------------+
-
-            In [7]: %benchpy  cycles(100)
-
-            +---------------+-----------------------------+
-            |   Time (µs)   |       CI_tquant[0.95]       |
-            +---------------+-----------------------------+
-            | 20.3202796031 | [ 19.40618596  20.80962796] |
-            +---------------+-----------------------------+
-
+        In [10]: %benchpy -n 1000 -g cycles(100)
+        +--------------+-----------------------------+-----------------------------+---------------+---------------------------+
+        |  Time (µs)   |       CI_tquant[0.95]       | Features: ['batch' 'const'] |    gc_time    | predicted time without gc |
+        +--------------+-----------------------------+-----------------------------+---------------+---------------------------+
+        | 64.256959342 | [  0.          99.92966164] | [ 28.80691753  35.45004181] | 7.67428691294 |        56.582672429       |
+        +--------------+-----------------------------+-----------------------------+---------------+---------------------------+
 
         """
         opts, arg_str = self.parse_options(parameter_s, 'igm:n:pr:t:',
@@ -97,32 +97,29 @@ class ExecutionMagics(Magics):
             arg_str = self.shell.input_transformer_manager.transform_cell(cell)
         with_gc = 'g' in opts
         n_samples = int(opts.get('r', [5])[0])
-        max_batch = int(opts.get('n', [100])[0])
-        n_batches = min(int(max_batch), int(opts.get('m', [5])[0]))
+        max_batch = int(opts.get('n', [10])[0])
+        n_batches = min(int(max_batch), int(opts.get('m', [10])[0]))
         table_keys = None
         table_labels = opts.get('t', [None])[0]
         if table_labels is not None:
-            if len(set(table_labels) - set('ntcsmMrgf')):
-                raise BenchException("Table parameters must be "
-                                     "a subset of set 'ntcsmMrgf'."
-                                     "Use %benchpy? for more detailed "
-                                     "information")
             table_keys = table_labels
         f = partial(exec, arg_str, glob)
         from .run import run, bench
         res = run(bench(f), with_gc=with_gc,
-                           n_samples=n_samples,
-                           n_batches=n_batches,
-                           max_batch=max_batch,
+                  n_samples=n_samples,
+                  n_batches=n_batches,
+                  max_batch=max_batch,
                   multi=False)
-        if 'p' in opts:
-            plot_results(res)
-            plt.show()
 
         if 'i' in opts:
             print(res._repr("Full"))
         else:
             print(res._repr(table_keys, with_empty=False))
+
+        if 'p' in opts:
+            res.plot()
+            res.plot_features()
+            plt.show()
 
 
 ip = get_ipython()

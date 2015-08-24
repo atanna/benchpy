@@ -14,7 +14,7 @@ class VisualMixin(object):
     Used only with StatMixin.
     """
     table_keys = ['Name', 'Time', 'CI', 'Features_time',
-                  'Std', 'Min', 'Max',
+                  'Std', 'Min', 'Max', 'R2',
                   'gc_time', 'Time_without_gc',
                   'fit_info']
 
@@ -32,7 +32,7 @@ class VisualMixin(object):
         fit_info = ""
         for key, value in self.fit_info.items():
             _val = value
-            if isinstance(value, list):
+            if isinstance(value, list) or isinstance(value, np.ndarray):
                 n = len(value)
                 if n > 2:
                     _val = "[{}, {}, ... ,{}]". \
@@ -49,6 +49,7 @@ class VisualMixin(object):
                      Std=self.std * w,
                      Min=self.min * w,
                      Max=self.max * w,
+                     R2=self.r2,
                      Features_time=self.features_time * w,
                      gc_time=self.gc_time * w,
                      Time_without_gc=(self.time - self.gc_time) * w,
@@ -98,10 +99,11 @@ class VisualMixin(object):
         Return representation of class
         :param table_keys: columns of representation table
         string or dict, default ["Name", "Time", "CI"]
-        If a string, this may be "Full" or [n][t][c][f][s][m][M][g][i]
-        (n='Name', t='Time', c='CI', f='Features_time', s='Std', m='Min', M='Max',
-        i='fit_info')
-        Full - all available columns  (='ntcsmMrgf')
+        If a string, this may be "Full" or [n][t][c][f][s][m][M][r][g][i]
+        (n='Name', t='Time', c='CI', f='Features_time',
+         s='Std', m='Min', M='Max', r="R2", g='gc_time',
+         i='fit_info')
+        Full - all available columns  (='ntcfmMrgi')
         :param with_empty: flag to include/uninclude empty columns
         """
         measure = self.choose_time_measure()
@@ -110,12 +112,13 @@ class VisualMixin(object):
         elif table_keys == "Full":
             table_keys = self.table_keys
         elif isinstance(table_keys, str):
-            if len(set(table_keys) - set('ntcsmMrgf')):
+            if len(set(table_keys) - set('ntcsmMrgfi')):
                 raise BenchException("Table parameters must be "
                                "a subset of set 'ntcsmMrgf'")
             table_dict = dict(n='Name', t='Time', c='CI',
-                              f='Features_time', s='Std',
-                              m='Min', M='Max', i='fit_info')
+                              f='Features_time', s='Std', r='R2',
+                              m='Min', M='Max', i='fit_info',
+                              g='gc_time')
             table_keys = map(lambda x: table_dict[x], table_keys)
         _table_keys = []
         table = self.get_table(measure)
@@ -179,6 +182,13 @@ class VisualMixinGroup(object):
 
 
 def plot_results(res, **kwargs):
+
+    """
+    Return plot with time values,
+    all parameters of regression from bootstrap and mean
+    :param res: BenchResult or GroupResult or list of BenchResult
+    :param kwargs:
+    """
     from .run import BenchResult, GroupResult
     if isinstance(res, BenchResult):
         return _plot_result(res, **kwargs)
@@ -281,6 +291,9 @@ def _plot_group(gr_res, labels=None, figsize=(25, 15),
 
 def plot_features(bm_res, s=180, alpha=0.4, figsize=(25, 15),
                          save=False, path=None, **kwargs):
+    """
+    Return plot with every regression feature (parameter).
+    """
     from .run import GroupResult
     if isinstance(bm_res, GroupResult):
         if path is None:
@@ -339,6 +352,9 @@ def save_plot(fig, path=None, figsize=(25,15)):
 
 
 def save_info(res, path=None, path_suffix="", with_plots=True, plot_params=None):
+    """
+    Save information about benchmarks and time plots.
+    """
     if path is None:
         path = "res_info"
     if plot_params is None:
