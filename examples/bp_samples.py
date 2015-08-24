@@ -213,7 +213,7 @@ def sample(f, *params, name=None,
 
 
 if __name__ == "__main__":
-    html_sample()
+    # html_sample()
     # list_group_sample(True)
     # cycle_list_sample()
     # cycle_sample()
@@ -227,6 +227,7 @@ if __name__ == "__main__":
     # sample(cycle_list, 1000, max_batch=100, n_batches=80, n_samples=80)
     # sample(cycle_list, 1000, max_batch=10, n_batches=10, n_samples=40)
     # sample(cycle_list, 100, max_batch=10, n_batches=10, n_samples=20)
+    sample(cycle_list, 100, max_batch=5, n_batches=2, n_samples=2)
 
 
 

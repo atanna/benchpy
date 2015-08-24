@@ -366,27 +366,43 @@ def save_info(res, path=None, path_suffix="", with_plots=True, plot_params=None)
     if path_suffix:
         path_suffix = "_" + path_suffix
     os.makedirs(path, exist_ok=True)
+    info = ""
+    from .run import BenchResult
+    if isinstance(res, BenchResult):
+        n_used_samples = res.__dict__.get('n_used_samples')
+        info += "max_batch {}\nn_batches {}\nn_samples {}  {}\n " \
+               "with_gc {}\nbatch_sizes: {}\n"\
+            .format(res.batch_sizes[-1],
+                    res.n_batches,
+                    res.n_samples,
+                "(used {})".format(n_used_samples) if n_used_samples is not None else '',
+                    res.with_gc,
+                    res.batch_sizes)
     with open("{}/info{}".format(path, path_suffix), "a") as f:
-        f.write("{}\n".format(res.name.capitalize()))
-        from .run import BenchResult
-        if isinstance(res, BenchResult):
-            f.write("max_batch {}\nn_batches {}\nn_samples {}  ({})\n"
-                    "with_gc {}\n"
-                    .format(res.batch_sizes[-1],
-                            res.n_batches,
-                            res.n_samples, res.__dict__.get('n_used_samples'),
-                            res.with_gc))
-            f.write("batch_sizes: {}\n".format(res.batch_sizes))
-            f.write("X:  {}\n{}\ny:\n{}\n\n".format(res.feature_names,
-                                                    res.X, res.y))
+        f.write("{}\n"\
+        .format(res.name.capitalize()))
+        f.write(info)
+        f.write("X:  {}\n{}\ny:\n{}\n\n"
+                .format(res.feature_names, res.X, res.y))
         f.write(str(res._repr(with_features=True)))
-        f.write("\n\n")
 
     if with_plots:
-        res.plot(save=True, path="{}/plot{}.jpg".format(path, path_suffix),
-                 **plot_params)
+        features_path = "features{}.jpg".format(path_suffix)
+        plot_path = "plot{}.jpg".format(path_suffix)
+        res.plot(save=True, path="{}/{}".format(path, plot_path), **plot_params)
         res.plot_features(save=True,
-                          path="{}/features{}.jpg".format(path, path_suffix),
-                          **plot_params)
+                          path="{}/{}".format(path, features_path), **plot_params)
+
+    with open("{}/report_template.html".format(os.path.split(__file__)[0]), "rt") as f:
+        template = f.read()
+    with open("{}/report.html".format(path), "at") as f:
+        f.write(
+            template.format(
+                name=res.name.capitalize(),
+                features_path=features_path,
+                plot_path=plot_path,
+                table=res._repr(with_empty=False).get_html_string(format=True)
+            )
+        )
 
 
