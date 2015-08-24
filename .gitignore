@@ -2,4 +2,5 @@
 *.c
 *.so
 build/
+docs/_build/
 results*/
