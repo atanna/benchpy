@@ -3,13 +3,12 @@ from time import perf_counter
 
 import numpy as np
 
-from .timed_eval import get_time_perf_counter
+from ._speedups import time_loop
 
 
 def noop_time_preprocessing(batch_sizes):
-    return dict(zip(batch_sizes,
-                     [get_time_perf_counter(noop, batch)
-                      for batch in batch_sizes]))
+    return dict((batch_size, time_loop(noop, batch))
+                 for batch in batch_sizes)
 
 
 def noop_time(batch, dict_noop_time=None):
@@ -20,8 +19,8 @@ def noop_time(batch, dict_noop_time=None):
     :return:
     """
     if dict_noop_time is None:
-        dict_noop_time = {}
-    return dict_noop_time.get(batch, get_time_perf_counter(noop, batch))
+        dict_noop_time = {}  # JFY `dict_noop_time` is always `None`.
+    return dict_noop_time.get(batch, time_loop(noop, batch))
 
 
 def _warm_up(f, n=2):
@@ -90,7 +89,7 @@ def get_time(args):
     f, batch, with_gc, with_callback = args
     _warm_up(f)
     with gc_manager(with_gc, with_callback) as callback:
-        time = max(get_time_perf_counter(f, batch) - noop_time(batch), 0.)
+        time = max(time_loop(f, batch) - noop_time(batch), 0.)
         if with_callback:
             return time, callback.time()
     return time, 0

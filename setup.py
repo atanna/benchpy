@@ -41,7 +41,7 @@ setup_options = dict(
     url="https://github.com/atanna/bm",
     packages=["benchpy"],
     classifiers=CLASSIFIERS,
-    ext_modules=cythonize("benchpy/timed_eval.pyx"),
+    ext_modules=cythonize("benchpy/_speedups.pyx"),
     requires=["numpy", "scipy", "prettytable"]
 )
 
