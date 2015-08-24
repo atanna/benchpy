@@ -1,6 +1,8 @@
 import gc
-import numpy as np
 from time import perf_counter
+
+import numpy as np
+
 from .timed_eval import get_time_perf_counter
 
 

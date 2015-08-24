@@ -1,10 +1,11 @@
 import numpy as np
-from cached_property import cached_property
 from collections import namedtuple
 from numpy.linalg import LinAlgError
 from scipy.optimize import nnls
 from scipy.stats.mstats import mquantiles
+
 from .exception import BenchException
+from .utils import cached_property
 
 Stat = namedtuple("Stat", 'val std ci')
 Regression = namedtuple("Regression", 'stat_w stat_y r2')

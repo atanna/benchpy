@@ -1,10 +1,13 @@
-import numpy as np
+# -*- coding: utf-8 -*-
+
 from collections import namedtuple
-from itertools import repeat
 from functools import partial
+from itertools import repeat
 from multiprocessing import Pool
+
+import numpy as np
+
 from .analyse import StatMixin
-from ._gc_time import get_time
 from .display import VisualMixin, VisualMixinGroup
 from .exception import BenchException
 
@@ -106,6 +109,7 @@ def _run(f, func_name="",
     (note: multiprocessing does not work with magic function benchpy)
     :return: BenchResult
     """
+    from ._gc_time import get_time
 
     n_batches = min(max_batch, n_batches)
     # batch_sizes are uniformly distributed on [0, max_batch]
@@ -142,8 +146,3 @@ def _run(f, func_name="",
                        batch_sizes=batch_sizes,
                        with_gc=with_gc,
                        func_name=func_name)
-
-
-
-
-
