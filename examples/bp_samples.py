@@ -1,3 +1,4 @@
+import glob
 import html5lib
 import os
 import time
@@ -46,18 +47,20 @@ def exception_sample():
     print(res)
 
 
-def html_sample(save=True, path=None):
+def html_sample(save=True, path=None, doc=None):
+    _dir = os.path.join(os.path.dirname(__file__), "data")
+    if doc is None:
+        doc = np.random.choice(glob.glob(_dir+"/*.html"))
     data = StringIO(open(
-        os.path.join(os.path.join(os.path.dirname(__file__), "data"),
-                     "html5lib_spec.html")).read())
+        os.path.join(_dir, doc)).read())
 
     max_batch = 70
     n_batches = 70
     n_samples = 80
 
-    max_batch = 20
-    n_batches = 20
-    n_samples = 20
+    # max_batch = 20
+    # n_batches = 20
+    # n_samples = 20
 
     run_params = OrderedDict(max_batch=max_batch,
                   n_batches=n_batches,
@@ -66,7 +69,9 @@ def html_sample(save=True, path=None):
     case = bp.bench(html_parse, data,
                     run_params=run_params,
                     func_name="html___with_gc")
-    path = path if path is not None else get_path("html_parse", "", case=case)
+    path = path if path is not None else \
+        get_path("html_parse_"+os.path.splitext(os.path.basename(doc))[0],
+                 "", case=case)
     run_sample_case(case, save=save, path=path, path_suffix="gc")
 
     run_params["with_gc"] = False
@@ -152,7 +157,7 @@ def get_path(name="", params=None, max_batch=-1, n_batches=-1,
                         max_batch=case.run_params.get('max_batch', -1),
                         n_batches=case.run_params.get('n_batches', -1),
                         n_samples=case.run_params.get('n_samples', -1))
-    dir_results = "results_"
+    dir_results = "results_fixed_cpu_3"
 
     if max_batch > 0:
         inter_folder = "/{max_batch}_{n_batches}_{n_samples}/"\
@@ -208,7 +213,7 @@ def sample(f, *params, name=None,
 
 
 if __name__ == "__main__":
-    # html_sample()
+    html_sample()
     # list_group_sample(True)
     # cycle_list_sample()
     # cycle_sample()
@@ -219,8 +224,9 @@ if __name__ == "__main__":
     # sample(cycle_and_sleep, 100, 1e-2, max_batch=50, n_batches=50, n_samples=80)
     # sample(cycle_and_sleep, 100, 1e-3, max_batch=45, n_batches=45, n_samples=40)
     # sample(cycle_and_sleep, 100, 1e-3, max_batch=100, n_batches=80, n_samples=80)
-    sample(cycle_list, 100, max_batch=150, n_batches=100, n_samples=100)
-    # sample(cycle_list, 100, max_batch=2, n_batches=2, n_samples=2)
+    # sample(cycle_list, 1000, max_batch=100, n_batches=80, n_samples=80)
+    # sample(cycle_list, 1000, max_batch=10, n_batches=10, n_samples=40)
+    # sample(cycle_list, 100, max_batch=10, n_batches=10, n_samples=20)
 
 
 
