@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from __future__ import absolute_import
+
 from collections import namedtuple
 from functools import partial
 from itertools import repeat
@@ -7,9 +9,9 @@ from multiprocessing import Pool
 
 import numpy as np
 
-from .analyse import StatMixin
+from .analysis import StatMixin
 from .display import VisualMixin, VisualMixinGroup
-from .exception import BenchException
+from .exceptions import BenchException
 
 
 _Bench = namedtuple("_Bench", 'name f run_params')

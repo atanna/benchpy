@@ -1,10 +1,13 @@
-import numpy as np
+# -*- coding: utf-8 -*-
+
 from collections import namedtuple
+
+import numpy as np
 from numpy.linalg import LinAlgError
 from scipy.optimize import nnls
 from scipy.stats.mstats import mquantiles
 
-from .exception import BenchException
+from .exceptions import BenchException
 from .utils import cached_property
 
 Stat = namedtuple("Stat", 'val std ci')

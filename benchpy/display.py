@@ -1,9 +1,15 @@
+# -*- coding: utf-8 -*-
+
+from __future__ import absolute_import
+
 import os
-import numpy as np
-import pylab as plt
 from collections import OrderedDict
+
+import numpy as np
+from matplotlib import pyplot as plt
 from prettytable import PrettyTable
-from .exception import BenchException
+
+from .exceptions import BenchException
 
 time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
                                 [1, 1e3, 1e6, 1e9]))
@@ -404,5 +410,3 @@ def save_info(res, path=None, path_suffix="", with_plots=True, plot_params=None)
                 table=res._repr(with_empty=False).get_html_string(format=True)
             )
         )
-
-
