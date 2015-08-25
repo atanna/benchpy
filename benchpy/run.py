@@ -3,7 +3,6 @@
 from __future__ import absolute_import
 
 from collections import namedtuple
-from functools import partial
 from itertools import repeat
 from multiprocessing import Pool
 
@@ -11,21 +10,26 @@ import numpy as np
 
 from .analysis import StatMixin
 from .display import VisualMixin, VisualMixinGroup
-from .exceptions import BenchException
 
 
-_Bench = namedtuple("_Bench", 'name f run_params')
-_Group = namedtuple("_Group", 'name group run_params')
+_Bench = namedtuple("_Bench", "name f run_params")
 
 
 class Bench(_Bench):
-    def run(self, **kwargs):
-        return run(self, **kwargs)
+    def run(self, *args, **kwargs):
+        kwargs.update(self.run_params, func_name=self.name)
+        return _run(self.f, *args, **kwargs)
+
+
+_Group = namedtuple("_Group", "name group run_params")
 
 
 class Group(_Group):
-    def run(self, **kwargs):
-        return run(self, **kwargs)
+    def run(self, *args, **kwargs):
+        kwargs.update(self.run_params)
+        return GroupResult(self.name, [
+            bench.run(*args, **kwargs) for bench in self.group
+        ])
 
 
 class BenchResult(StatMixin, VisualMixin):
@@ -40,57 +44,6 @@ class GroupResult(VisualMixinGroup):
         self.n_batches = res.n_batches
         self.n_samples = res.n_samples
         self.batch_sizes = res.batch_sizes
-
-
-def bench(f, *args, run_params=None, func_name="", **kwargs):
-    """
-    :param f: function which measured
-    :param args: args of f
-    :param run_params: parameters for benchmark
-    :param func_name: function name
-    :param kwargs: kwargs of f
-    :return: Bench
-    """
-    if run_params is None:
-        run_params = {}
-    return Bench(func_name,
-                 partial(f, *args, **kwargs),
-                 run_params)
-
-
-def group(name, group, **run_params):
-    """
-    :param name:
-    :param group: list of Benches
-    :param run_params:
-    :return: Group
-    """
-    return Group(name, group, run_params)
-
-
-def run(case, *args, **kwargs):
-    """
-    Exec benchmark for each function in case
-    See _run's description
-    :param case:
-    case = list of cases | Bench | Group
-    :param args: args for _run
-    :param kwargs: kwargs for _run
-    :return:
-    """
-    if isinstance(case, Group):
-        return GroupResult(case.name, [run(bench, *args,
-                                           **dict(kwargs, **case.run_params))
-                                       for bench in case.group])
-    elif isinstance(case, Bench):
-        params = dict(kwargs)
-        params.update(func_name=case.name)
-        params.update(case.run_params)
-        return _run(case.f, *args, **params)
-    elif isinstance(case, list):
-        return [run(_case, *args, **kwargs) for _case in case]
-    else:
-        raise BenchException("Case must be Bench or Group or list")
 
 
 def _run(f, func_name="",

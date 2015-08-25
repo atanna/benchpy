@@ -6,8 +6,6 @@ from functools import partial
 
 from matplotlib import pyplot as plt
 
-from .run import run, bench
-
 
 def magic_benchpy(self, parameter_s='', cell=None):
     """
@@ -106,6 +104,8 @@ def magic_benchpy(self, parameter_s='', cell=None):
     if table_labels is not None:
         table_keys = table_labels
     f = partial(exec, arg_str, glob)
+
+    from . import run, bench
     res = run(bench(f), with_gc=with_gc,
               n_samples=n_samples,
               n_batches=n_batches,
