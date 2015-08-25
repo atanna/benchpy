@@ -44,8 +44,7 @@ class GroupResult(VisualMixinGroup):
 
 def _run(f, func_name="",
          n_samples=10, max_batch=100, n_batches=10,
-         with_gc=True, with_callback=True,
-         multi=True):
+         with_gc=True, multi=True):
     """
 
     :param f: function which measured (without arguments)
@@ -54,7 +53,6 @@ def _run(f, func_name="",
     :param max_batch: maximum of batch size
     :param n_batches: number of batches
     :param with_gc: flag for enable/disable Garbage Collector
-    :param with_callback: flag for use/not use callback
      which measure gc working time (use only with gc, python version >= 3.3)
     :param multi: flag for use/not use multiprocessing
     (note: multiprocessing does not work with magic function benchpy)
@@ -80,15 +78,13 @@ def _run(f, func_name="",
                 full_time[i], gc_time[i] = \
                     zip(*p.map(get_time, zip(repeat(f),
                                              batch_sizes,
-                                             repeat(with_gc),
-                                             repeat(with_callback))))
+                                             repeat(with_gc))))
 
         else:
             full_time[i], gc_time[i] = \
                 zip(*list(map(get_time, zip(repeat(f),
                                             batch_sizes,
-                                            repeat(with_gc),
-                                            repeat(with_callback)))))
+                                            repeat(with_gc)))))
 
     return BenchResult(full_time,
                        gc_time=gc_time,
@@ -129,11 +125,10 @@ def get_time(args):
     f - function,
     batch - number of the executions in cycle
     with_gc - flag to enable/disable Garbage Collector
-    with_callback - flag to use callback function which evaluate
     collections time (useful only with python version >= 3.3)
     """
-    f, batch, with_gc, with_callback = args
+    f, batch, with_gc = args
     _warm_up(f)
-    with gc_manager(with_gc and with_callback) as m:
+    with gc_manager(with_gc) as m:
         time = max(time_loop(f, batch) - noop_time(batch), 0.)
         return time, m.collection_time
