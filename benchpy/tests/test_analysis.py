@@ -13,4 +13,4 @@ def test_ridge_regression():
     Xy = np.c_[X, y]
 
     w_hat = ridge_regression(Xy)
-    assert_allclose(w, w_hat, atol=1e-3)
+    assert_allclose(w, w_hat, atol=1e-2)
