@@ -12,19 +12,13 @@ from .analysis import StatMixin
 from .display import VisualMixin, VisualMixinGroup
 
 
-_Bench = namedtuple("_Bench", "name f run_params")
-
-
-class Bench(_Bench):
+class Bench(namedtuple("Bench", "name f run_params")):
     def run(self, *args, **kwargs):
         kwargs.update(self.run_params, func_name=self.name)
         return _run(self.f, *args, **kwargs)
 
 
-_Group = namedtuple("_Group", "name group run_params")
-
-
-class Group(_Group):
+class Group(namedtuple("_Group", "name group run_params")):
     def run(self, *args, **kwargs):
         kwargs.update(self.run_params)
         return GroupResult(self.name, [
