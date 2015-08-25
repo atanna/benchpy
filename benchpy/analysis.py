@@ -116,7 +116,7 @@ class Features(object):
 
 class StatMixin(object):
     def __init__(self, full_time, batch_sizes, with_gc,
-                 gc_time=None, func_name="", gamma=0.95, type_ci="tquant"):
+                 gc_time=None, func_name="", gamma=0.95, type_ci="efr"):
         self.full_time = full_time
         self.n_samples, self.n_batches = full_time.shape
         self.batch_sizes = batch_sizes
@@ -201,6 +201,10 @@ class StatMixin(object):
     @cached_property
     def features_time(self):
         return self.x_y[:-1] * self.regr.stat_w.val
+
+    @property
+    def predicted_time_witout_gc(self):
+        return self.time - self.gc_time
 
     @property
     def r2(self):
@@ -311,7 +315,7 @@ def ridge_regression(Xy, alpha=0.15):
     return w
 
 
-def bootstrap(X, B=1000, indexes=None, **kwargs):
+def resample(X, B=1000, indexes=None, **kwargs):
     """
     Return new `B` samples, where every sample has n elements and i-th element
     of sample be chosen from i-th column of the matrix X,
@@ -343,18 +347,18 @@ def get_statistic(values, f_stat, with_arr_values=False,
     """
     if bootstrap_kwargs is None:
         bootstrap_kwargs = {}
-    arr_values = bootstrap(values, **bootstrap_kwargs)
+    arr_values = resample(values, **bootstrap_kwargs)
     arr_stat = []
     for _values in arr_values:
         try:
             arr_stat.append(f_stat(_values))
-        except:
+        except Exception:
             continue
 
     mean_val = None
     try:
         mean_val = f_stat(values)
-    except:
+    except Exception:
         pass
     arr_stat = np.array(arr_stat)
     if with_arr_values:

@@ -8,6 +8,7 @@ from collections import OrderedDict
 import numpy as np
 from matplotlib import pyplot as plt
 from prettytable import PrettyTable
+from .utils import cached_property
 
 from .exceptions import BenchException
 
@@ -33,7 +34,9 @@ class VisualMixin(object):
     def save_info(self, *args, **kwargs):
         save_info(self, *args, **kwargs)
 
-    def get_table(self, measure='s'):
+    def get_table(self, measure=None, decimals=5):
+        if measure is None:
+            measure = self.time_measure
         w = time_measures[measure]
         fit_info = ""
         for key, value in self.fit_info.items():
@@ -49,22 +52,29 @@ class VisualMixin(object):
             fit_info += info
         fit_info = fit_info[:-1]
 
-        table = dict(Name=self.name,
-                     Time=self.time * w,
-                     CI=self.ci * w,
-                     Std=self.std * w,
-                     Min=self.min * w,
-                     Max=self.max * w,
+        table = dict(Name=str(self.name),
+                     Time=self.time,
+                     CI=self.ci,
+                     Std=self.std,
+                     Min=self.min,
+                     Max=self.max,
                      R2=self.r2,
-                     Features_time=self.features_time * w,
-                     gc_time=self.gc_time * w,
-                     Time_without_gc=(self.time - self.gc_time) * w,
-                     fit_info=fit_info)
+                     Features_time=self.features_time,
+                     gc_time=self.gc_time,
+                     Time_without_gc=self.predicted_time_witout_gc,
+                     fit_info=str(fit_info))
+        table = dict(map(lambda x: (x[0], np.round(x[1], decimals))
+        if x[0] == "R2"
+        else (x[0], np.round(x[1] * w, decimals))
+        if isinstance(x[1], float) or isinstance(x[1], np.ndarray)
+        else (x[0],x[1]), table.items()))
+
         return table
 
-    def choose_time_measure(self, perm_n_points=0):
+    @cached_property
+    def time_measure(self):
         t = self.time
-        c = 10 ** perm_n_points
+        c = 10
         for measure, w in time_measures.items():
             if int(t * w * c):
                 return measure
@@ -74,7 +84,7 @@ class VisualMixin(object):
             table_keys = self.table_keys
 
         if measure is None:
-            measure = self.choose_time_measure()
+            measure = self.time_measure
         pretty_table = PrettyTable(list(
             map(lambda key:
                 "CI_{}[{}]"
@@ -112,7 +122,7 @@ class VisualMixin(object):
         Full - all available columns  (='ntcfmMrgi')
         :param with_empty: flag to include/uninclude empty columns
         """
-        measure = self.choose_time_measure()
+        measure = self.time_measure
         if table_keys is None:
             table_keys = self.default_table_keys(with_features=with_features)
         elif table_keys == "Full":
@@ -159,7 +169,7 @@ class VisualMixinGroup(object):
                 first_res.default_table_keys(with_features=with_features)
         elif table_keys is "Full":
             table_keys = self.table_keys
-        measure = first_res.choose_time_measure()
+        measure = first_res.time_measure
         tables = [bm_res.get_table(measure) for bm_res in self.bench_results]
         n_results = len(self.bench_results)
         _table_keys = []
@@ -203,7 +213,8 @@ def plot_results(res, **kwargs):
     elif type(res) == list:
         return [plot_results(_res, **kwargs) for _res in res]
     else:
-        raise BenchException("res must be BenchRes or GroupRes or list")
+        raise BenchException("Type of 'res' must belong to "
+                             "{BenchRes, GroupRes, list}")
 
 
 def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
@@ -226,11 +237,18 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
     if shift > 0:
         batch_shift = shift * bm_res.batch_sizes[1]
     batch_sizes_ = bm_res.batch_sizes + batch_shift
-    measure = bm_res.choose_time_measure()
+    measure = bm_res.time_measure
     w_measure = time_measures[measure]
     for time_ in bm_res.full_time:
-        ax.scatter(batch_sizes_, time_*w_measure, c=c, s=s, alpha=alpha)
-    ax.scatter([], [], c=c, s=s, alpha=alpha, label=label)
+        ax.scatter(batch_sizes_, time_*w_measure, color=c, s=s, alpha=alpha)
+    ax.scatter([], [], color=c, s=s, alpha=alpha, label=label+"time")
+
+    used_t_color = mixed_color(c, np.array([[0], [1.], [0.]]), 0.1)
+    for time_ in bm_res.features.y:
+        ax.scatter(batch_sizes_, time_*w_measure, marker="*",
+                   color=used_t_color, s=s/5)
+    ax.scatter([], [], marker="*", color=used_t_color, s=s/5,
+               label=label+"used time")
 
     _alpha = 0.15
     color = 'r'
@@ -246,7 +264,8 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
             color=c, linewidth=linewidth, label=mean_label)
     if bm_res.stat_w is not None:
         w = bm_res.stat_w.val
-        regr_label = "{}_regr, w={}".format(label, np.round(w, 5)) if len(label) else "regr"
+        regr_label = "{}_regr, w={}".format(label, np.round(w, 5)) \
+            if len(label) else "regr"
         ax.plot(batch_sizes_, bm_res.X.dot(w)*w_measure, 'r--', color=c,
                 linewidth=linewidth,
                 label=regr_label)
@@ -308,8 +327,10 @@ def plot_features(bm_res, s=180, alpha=0.4,
             path = "features.jpg"
         name, ext = os.path.splitext(path)
         for i, res in enumerate(bm_res.bench_results):
-            plot_features(res, s, alpha, figsize, save,
-                                 "{}{}{}".format(name, i, ext))
+            plot_features(res, s=s, alpha=alpha,
+                          figsize=figsize, fontsize=fontsize,
+                          save=save,
+                          path="{}{}{}".format(name, i, ext), **kwargs)
         return
     batch_sizes = bm_res.batch_sizes
     fig = plt.figure(figsize=figsize)
@@ -318,7 +339,7 @@ def plot_features(bm_res, s=180, alpha=0.4,
     n_features = len(bm_res.feature_names)
     cm = plt.get_cmap('gist_rainbow')
     colors = [cm(1.*i/n_features) for i in range(n_features)]
-    measure = bm_res.choose_time_measure()
+    measure = bm_res.time_measure
     w_measure = time_measures[measure]
     for i, x in enumerate(bm_res.X.T):
         c = colors[i]
@@ -368,6 +389,23 @@ def save_info(res, path=None, path_suffix="", with_plots=True,
     """
     if path is None:
         path = "res_info"
+    from .run import GroupResult, BenchResult
+    results = []
+    if isinstance(res, GroupResult):
+        results = res.bench_results
+    if isinstance(res, list):
+        results = res
+    for i, _res in enumerate(results):
+        save_info(_res, path=path, path_suffix=str(path_suffix)+str(i),
+                  with_plots=with_plots,
+                  plot_params=plot_params, figsize=figsize, fontsize=fontsize)
+    if len(results):
+        return
+
+    if not isinstance(res, BenchResult):
+        raise BenchException("Type of 'res' must belong to "
+                             "{BenchRes, GroupRes, list}")
+
     if plot_params is None:
         plot_params = {}
     if isinstance(res, list):
@@ -377,21 +415,20 @@ def save_info(res, path=None, path_suffix="", with_plots=True,
     if path_suffix:
         path_suffix = "_" + path_suffix
     os.makedirs(path, exist_ok=True)
-    info = ""
-    from .run import BenchResult
-    if isinstance(res, BenchResult):
-        n_used_samples = res.__dict__.get('n_used_samples')
-        info += "max_batch {}\nn_batches {}\nn_samples {}  {}\n " \
-               "with_gc {}\nbatch_sizes: {}\n"\
-            .format(res.batch_sizes[-1],
-                    res.n_batches,
-                    res.n_samples,
-                "(used {})".format(n_used_samples) if n_used_samples is not None else '',
-                    res.with_gc,
-                    res.batch_sizes)
+
+    n_used_samples = res.__dict__.get('n_used_samples')
+    info = "max_batch {}\nn_batches {}\nn_samples {}  {}\n " \
+            "with_gc {}\nbatch_sizes: {}\n" \
+        .format(res.batch_sizes[-1],
+                res.n_batches,
+                res.n_samples,
+                "(used {})".format(n_used_samples) if
+                           n_used_samples is not None else '',
+                res.with_gc,
+                res.batch_sizes)
     with open("{}/info{}".format(path, path_suffix), "a") as f:
-        f.write("{}\n"\
-        .format(res.name.capitalize()))
+        f.write("{}\n" \
+                .format(res.name.capitalize()))
         f.write(info)
         if isinstance(res, BenchResult):
             f.write("X:  {}\n{}\ny:\n{}\n\n"
@@ -410,14 +447,31 @@ def save_info(res, path=None, path_suffix="", with_plots=True,
     with open("{}/report_template.html"
                       .format(os.path.split(__file__)[0]), "rt") as f:
         template = f.read()
+
+    table = res.get_table()
+    feature_table = PrettyTable(list(res.feature_names))
+    feature_table.add_row(table["Features_time"])
+
+
     with open("{}/report.html".format(path), "at") as f:
         f.write(
             template.format(
                 name=res.name.capitalize(),
                 features_path=features_path,
                 plot_path=plot_path,
-                table=res._repr(with_empty=False)
-                    .get_html_string(format=True,
-                                     border=True)
+                time_measure=res.time_measure,
+                time=table["Time"],
+                ci_0=table["CI"][0],
+                ci_1=table["CI"][1],
+                feature_table=
+                feature_table.get_html_string(format=True,
+                                              right_padding_width=2)
+                    .replace("th", "td"),
+                gc_time=table["gc_time"],
+                t_without_gc=table["Time_without_gc"]
             )
         )
+
+
+
+

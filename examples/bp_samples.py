@@ -141,9 +141,9 @@ def cycle_sample(**kwargs):
                       bp.bench(cycle_list, n,
                                run_params=dict(with_gc=False),
                                func_name="without_gc")],
-                     n_samples=10,
-                     max_batch=10,
-                     n_batches=10)
+                     n_samples=2,
+                     max_batch=2,
+                     n_batches=2)
 
     run_sample_case(group, **kwargs)
 
@@ -213,9 +213,9 @@ def sample(f, *params, name=None,
 
 
 if __name__ == "__main__":
-    # html_sample()
+    html_sample()
     # list_group_sample(True)
-    cycle_list_sample()
+    # cycle_list_sample()
     # cycle_sample()
     # noop_sample()
     # quick_noop_sample()

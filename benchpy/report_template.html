@@ -6,26 +6,51 @@
 </head>
 <body>
 <H2>{name}</H2>
-<table width=750 border="1" cellpadding="5">
+<table width="100%" border="1" cellpadding="5">
 
 <tr>
 
 <td align="center" valign="center">
-<img width=700 height=450 src="{features_path}" alt="Features" />
+<img width="100%" src="{features_path}" alt="Features" />
 <br />
-Parameters of average regression.
+Parameters of the average regression.
 </td>
 
 <td align="center" valign="center">
-<img width=700 height=450 src="{plot_path}" alt="Plot" />
+<img width="100%" src="{plot_path}" alt="Plot" />
 <br />
-Bootstrapping regression.
+Bootstrapping regression model.
 </td>
 
 </tr>
 </table>
 <br><br>
-{table}
+
+</table>
+<br><br>
+
+<table style="padding:2em">
+    <tr>
+        <td style="padding-right: 1em;">Time, {time_measure}</td>
+        <td><b>{time}</b><span style="display:inline-block; width: 4em"></span><font color="#808080">({ci_0} .. {ci_1})</font></td>
+    </tr>
+    <tr>
+        <td style="padding-right: 1em;vertical-align: top"></td>
+        <td>
+            {feature_table}
+        </td>
+    </tr>
+    <tr>
+        <td style="padding-right: 1em;">Time of gc collections</td>
+        <td>{gc_time}</td>
+    </tr>
+    <tr>
+        <td style="padding-right: 1em;">Predicted time without gc</td>
+        <td>{t_without_gc}</td>
+    </tr>
+</table>
+
+
 <br>
 </body>
 </html>
