@@ -5,3 +5,4 @@ API reference
 =============
 
 .. automodule:: benchpy
+    :members:
