@@ -5,8 +5,6 @@ from __future__ import absolute_import
 __all__ = ['bench', 'group', 'run', 'plot_results',
            "plot_features", "save_info"]
 
-__version__ = "0.1.0"
-
 import functools
 
 from .run import Bench, Group, _run

@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+"""benchpy is a library for statistical benchmarking in Python."""
 
 from setuptools import setup
 from Cython.Build import cythonize
@@ -25,14 +26,9 @@ CLASSIFIERS = [
 ]
 
 
-import benchpy
-
-VERSION = benchpy.__version__
-
-
 setup_options = dict(
     name="benchpy",
-    version=VERSION,
+    version="0.1.0",
     description=DESCRIPTION,
     long_description=LONG_DESCRIPTION,
     maintainer=MAINTAINER,
