@@ -106,7 +106,7 @@ def list_group_sample(save=True, path=None):
     run_sample_case(case, save, name="factorial_group", path=path)
 
 
-def cycle_list_sample(save=False):
+def cycle_list_sample(save=True):
     bench_list = [bp.bench(cycle_list, n,
                            func_name="{} cycles".format(n))
                   for n in range(100, 201, 100)]
@@ -117,7 +117,7 @@ def cycle_list_sample(save=False):
                     n_samples=100),
             bp.group(name, bench_list,
                      max_batch=45,
-                     _batches=45,
+                     n_batches=45,
                      n_samples=100)]
     run_sample_case(case, save)
 
@@ -215,7 +215,7 @@ def sample(f, *params, name=None,
 if __name__ == "__main__":
     # html_sample()
     # list_group_sample(True)
-    # cycle_list_sample()
+    cycle_list_sample()
     # cycle_sample()
     # noop_sample()
     # quick_noop_sample()
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     # sample(cycle_list, 1000, max_batch=100, n_batches=80, n_samples=80)
     # sample(cycle_list, 1000, max_batch=10, n_batches=10, n_samples=40)
     # sample(cycle_list, 100, max_batch=10, n_batches=10, n_samples=20)
-    sample(cycle_list, 100, max_batch=5, n_batches=2, n_samples=2)
+    # sample(cycle_list, 100, max_batch=5, n_batches=2, n_samples=2)
 
 
 

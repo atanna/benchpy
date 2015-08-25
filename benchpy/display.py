@@ -211,6 +211,7 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
                  linewidth=2, add_text=True,
                  save=False, path=None,
                  figsize=(25, 15),
+                 fontsize=16,
                  group_plot=False,
                  **kwargs):
     if c is None:
@@ -245,21 +246,21 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
             color=c, linewidth=linewidth, label=mean_label)
     if bm_res.stat_w is not None:
         w = bm_res.stat_w.val
-        regr_label = "{}_regr, w={}".format(label, w) if len(label) else "regr"
+        regr_label = "{}_regr, w={}".format(label, np.round(w, 5)) if len(label) else "regr"
         ax.plot(batch_sizes_, bm_res.X.dot(w)*w_measure, 'r--', color=c,
                 linewidth=linewidth,
                 label=regr_label)
-        ax.legend()
-    ax.legend()
-    plt.legend()
+    ax.legend(fontsize=fontsize)
 
     if add_text:
-        ax.set_xlabel('batch_sizes')
-        ax.set_ylabel('time, {}'.format(measure))
+        ax.set_xlabel('Batch_sizes', fontsize=fontsize)
+        ax.set_ylabel('Time, {}'.format(measure), fontsize=fontsize)
         ax.grid(True)
-        ax.set_title(title)
+        if not len(title):
+            title = "Bootstrap regression"
+        ax.set_title(title, fontsize=fontsize*1.4)
     if save:
-        save_plot(fig, path=path)
+        save_plot(fig, path=path, figsize=figsize)
     return fig
 
 
@@ -291,12 +292,13 @@ def _plot_group(gr_res, labels=None, figsize=(25, 15),
                            **d)
         add_text = False
     if save:
-        save_plot(fig, path=path)
+        save_plot(fig, path=path, figsize=figsize)
     return fig
 
 
-def plot_features(bm_res, s=180, alpha=0.4, figsize=(25, 15),
-                         save=False, path=None, **kwargs):
+def plot_features(bm_res, s=180, alpha=0.4,
+                  figsize=(25, 15), fontsize=16,
+                  save=False, path=None, **kwargs):
     """
     Return plot with every regression feature (parameter).
     """
@@ -323,7 +325,8 @@ def plot_features(bm_res, s=180, alpha=0.4, figsize=(25, 15),
         w = W[i]
         w_x = w*x*w_measure
         ax.scatter(batch_sizes, w_x, c=c, s=s, alpha=alpha,
-                   label="{}  w={}".format(bm_res.feature_names[i], w)
+                   label="{}  w={}".format(bm_res.feature_names[i],
+                                           np.round(w*w_measure, 5))
                    .format(i, w))
         ax.plot(batch_sizes, w_x, color=c)
 
@@ -334,11 +337,12 @@ def plot_features(bm_res, s=180, alpha=0.4, figsize=(25, 15),
             color='b', label='border_regr')
     ax.plot(batch_sizes, bm_res.y*w_measure, 'bo', color='r', label="mean")
     ax.plot(batch_sizes, bm_res.y*w_measure, color='r')
-    ax.legend()
-    ax.set_xlabel('batch_sizes')
-    ax.set_ylabel('time, {}'.format(measure))
+    ax.legend(fontsize=fontsize)
+    ax.set_xlabel('Batch_sizes', fontsize=fontsize)
+    ax.set_ylabel('Time, {}'.format(measure), fontsize=fontsize)
+    ax.set_title("Regression parameters", fontsize=fontsize*1.4)
     if save:
-        save_plot(fig, path=path)
+        save_plot(fig, path=path, figsize=figsize)
     return fig
 
 
@@ -349,7 +353,7 @@ def mixed_color(c0, c1=None, p=0.5):
     return c / np.sum(c)
 
 
-def save_plot(fig, path=None, figsize=(25,15)):
+def save_plot(fig, path=None, figsize=(25, 15)):
     fig.set_size_inches(*figsize)
     if path is None:
         path = "plot.jpg"
@@ -357,7 +361,8 @@ def save_plot(fig, path=None, figsize=(25,15)):
     return path
 
 
-def save_info(res, path=None, path_suffix="", with_plots=True, plot_params=None):
+def save_info(res, path=None, path_suffix="", with_plots=True,
+              plot_params=None, figsize=(20, 12), fontsize=18):
     """
     Save information about benchmarks and time plots.
     """
@@ -388,18 +393,22 @@ def save_info(res, path=None, path_suffix="", with_plots=True, plot_params=None)
         f.write("{}\n"\
         .format(res.name.capitalize()))
         f.write(info)
-        f.write("X:  {}\n{}\ny:\n{}\n\n"
-                .format(res.feature_names, res.X, res.y))
+        if isinstance(res, BenchResult):
+            f.write("X:  {}\n{}\ny:\n{}\n\n"
+                    .format(res.feature_names, res.X, res.y))
         f.write(str(res._repr(with_features=True)))
 
     if with_plots:
         features_path = "features{}.jpg".format(path_suffix)
         plot_path = "plot{}.jpg".format(path_suffix)
-        res.plot(save=True, path="{}/{}".format(path, plot_path), **plot_params)
+        res.plot(save=True, path="{}/{}".format(path, plot_path),
+                 figsize=figsize, fontsize=fontsize, **plot_params)
         res.plot_features(save=True,
-                          path="{}/{}".format(path, features_path), **plot_params)
+                          path="{}/{}".format(path, features_path),
+                          figsize=figsize, fontsize=fontsize, **plot_params)
 
-    with open("{}/report_template.html".format(os.path.split(__file__)[0]), "rt") as f:
+    with open("{}/report_template.html"
+                      .format(os.path.split(__file__)[0]), "rt") as f:
         template = f.read()
     with open("{}/report.html".format(path), "at") as f:
         f.write(
@@ -407,6 +416,8 @@ def save_info(res, path=None, path_suffix="", with_plots=True, plot_params=None)
                 name=res.name.capitalize(),
                 features_path=features_path,
                 plot_path=plot_path,
-                table=res._repr(with_empty=False).get_html_string(format=True)
+                table=res._repr(with_empty=False)
+                    .get_html_string(format=True,
+                                     border=True)
             )
         )
