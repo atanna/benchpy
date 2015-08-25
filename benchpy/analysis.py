@@ -7,7 +7,6 @@ from numpy.linalg import LinAlgError
 from scipy.optimize import nnls
 from scipy.stats.mstats import mquantiles
 
-from .exceptions import BenchException
 from .utils import cached_property
 
 Stat = namedtuple("Stat", 'val std ci')
@@ -241,8 +240,7 @@ class StatMixin(object):
 
     def regression(self, B=1000, **kwargs):
         n_samples = len(self.features.X_y)
-        indexes = np.random.random_integers(0, n_samples-1,
-                                            size=(B, self.n_batches))
+        indexes = np.random.randint(0, n_samples, size=(B, self.n_batches))
         stat_w, arr_X_y, arr_st_w = \
             get_statistic(self.features.X_y, ridge_regression,
                           with_arr_values=True,
@@ -258,24 +256,6 @@ class StatMixin(object):
         w_r2 = np.array([r2(self.features.y, X.dot(w))
                          for X in self.features.X]).mean()
         return Regression(stat_w, stat_y, w_r2)
-
-
-def _mean_and_se(stat_values, stat=None, eps=1e-9):
-    """
-    Method for bootstrapping
-    Count mean and se. Use statistic in the bootstrap samples
-    :param stat_values: statistic values in the bootstrap samples
-    :param stat: statistic value in the full sample
-    :param eps: we use eps to define se when it has zero value
-    (to avoid ZeroDivisionError).
-    :return: (mean(stat_values), se(stat_values))
-    """
-    mean_stat = np.mean(stat_values, axis=0)
-    n = len(stat_values)
-    se_stat = np.maximum(np.std(stat_values, axis=0) * np.sqrt(n / (n-1)), eps)
-    if stat is not None:
-        mean_stat = 2 * stat - mean_stat
-    return mean_stat, se_stat
 
 
 def ridge_regression(Xy, alpha=0.15):
@@ -363,51 +343,47 @@ def get_statistic(values, f_stat, with_arr_values=False,
     return get_mean_stat(arr_stat, mean_val=mean_val, **ci_kwargs)
 
 
-def get_mean_stat(values, type_ci="efr", **kwargs):
-    if len(values) == 1:
-        return _const_stat(values[0])
-    dict_ci = dict(efr=mean_stat_efr,
-                   quant=mean_stat_quant,
-                   tquant=mean_stat_tquant)
-    if type_ci in dict_ci:
-        return dict_ci[type_ci](values, **kwargs)
-    else:
-        raise BenchException("unknown type of confidence interval '{}'"
-                             .format(type_ci))
-
-
 def r2(y_true, y_pred):
     std = y_true.std()
     return 1 - np.mean((y_true-y_pred)**2) / std if std \
         else np.inf * (1 - np.mean((y_true-y_pred)**2))
 
 
-def mean_stat_efr(arr, gamma=0.95, mean_val=None):
-    alpha = (1-gamma) / 2
-    return Stat(*_mean_and_se(np.array(arr), mean_val),
-                ci=np.array(mquantiles(arr, prob=[alpha, 1-alpha],
-                                       axis=0).T))
+def _mean_and_se(stat_values, stat=None):
+    """
+    Method for bootstrapping
+    Count mean and se. Use statistic in the bootstrap samples
+    :param stat_values: statistic values in the bootstrap samples
+    :param stat: statistic value in the full sample
+    :return: (mean(stat_values), se(stat_values))
+    """
+    mean_stat = np.mean(stat_values, axis=0)
+    se_stat = np.maximum(np.std(stat_values, ddof=1, axis=0),
+                         np.finfo(float).eps)
+    if stat is not None:
+        mean_stat = 2 * stat - mean_stat
+    return mean_stat, se_stat
 
 
-def mean_stat_quant(arr, gamma=0.95, mean_val=None):
-    alpha = (1-gamma) / 2
-    mean_stat, se_stat = _mean_and_se(arr, mean_val)
-    q = np.array(mquantiles(arr-mean_stat,
-                            prob=[alpha, 1-alpha], axis=0))
-    return Stat(mean_stat, se_stat,
-                np.array([mean_stat-q[1], mean_stat-q[0]]).T)
+def get_mean_stat(values, type_ci="efr", gamma=0.95, mean_val=None):
+    method = type_ci    # better name
+    confidence = gamma  # better name
+    alpha = (1 - confidence) / 2
+    if len(values) == 1:
+        [value] = values
+        return Stat(value, 0., np.array([value, value]))
 
+    mean_stat, se_stat = _mean_and_se(values, mean_val)
+    if method == "efr":
+        low, high = mquantiles(values, prob=[alpha, 1-alpha], axis=0)
+    elif method == "quant":
+        q = mquantiles(values - mean_stat, prob=[alpha, 1-alpha], axis=0)
+        low, high = mean_stat - q[1], mean_stat - q[0]
+    elif method == "tquant":
+        q = mquantiles((values - mean_stat) / se_stat,
+                       prob=[alpha, 1-alpha], axis=0)
+        low, high = mean_stat - se_stat * q[1], mean_stat - se_stat * q[0]
+    else:
+        raise ValueError("unknown method: {0!r}".format(method))
 
-def mean_stat_tquant(arr, gamma=0.95, mean_val=None):
-    alpha = (1-gamma) / 2
-    mean_stat, se_stat = _mean_and_se(arr, mean_val)
-    q = np.array(mquantiles((arr-mean_stat) / se_stat,
-                            prob=[alpha, 1-alpha],
-                            axis=0))
-    return Stat(mean_stat, se_stat,
-                np.array([mean_stat - se_stat * q[1],
-                          mean_stat - se_stat * q[0]]).T)
-
-
-def _const_stat(x):
-    return Stat(x, 0., np.array([x, x]))
+    return Stat(mean_stat, se_stat, np.array([low, high]).T)
