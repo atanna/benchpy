@@ -240,7 +240,7 @@ class StatMixin(object):
         indexes = np.random.random_integers(0, n_samples-1,
                                             size=(B, self.n_batches))
         stat_w, arr_X_y, arr_st_w = \
-            get_statistic(self.features.X_y, lin_regression,
+            get_statistic(self.features.X_y, ridge_regression,
                           with_arr_values=True,
                           bootstrap_kwargs=
                           dict(indexes=(indexes, np.arange(self.n_batches))),
@@ -278,22 +278,37 @@ def _mean_and_se(stat_values, stat=None, eps=1e-9):
     return mean_stat, se_stat
 
 
-def lin_regression(X, y=None, alpha=0.15):
+def ridge_regression(Xy, alpha=0.15):
+    r"""Fits an L2-penalized linear regression to the data.
+
+    The ridge coefficients are guaranteed to be non-negative and minimize
+
+    .. math::
+
+       \min\limits_w ||X w - y||_2 + \alpha ||w||_2
+
+    Parameters
+    ----------
+    Xy : (N, M + 1) array_like
+        Observation matrix. The first M columns are observations. The
+        last column corresponds to the target values.
+    alpha : float
+        Penalization strength. Larger values make the solution more robust
+        to collinearity.
+
+    Returns
+    -------
+    w : (M, ) ndarray
+        Non-negative ridge coefficients.
     """
-    Solve ``argmin_w || Xw - y ||_2 + alpha||w||_2`` for ``w>=0``.
-    :param X:
-    :param y: if y is None, we use last column of X as y
-    :param alpha:
-    :return: w
-    """
-    if y is None:
-        _X, _y = X[:, :-1], X[:, -1]
-    else:
-        _X, _y = X, y
-    n = _X.shape[1]
-    X_new = np.concatenate([_X, alpha*np.eye(n)])
-    y_new = np.concatenate([_y, np.zeros(n)])
-    return nnls(X_new, y_new)[0]
+    Xy = np.atleast_2d(Xy)
+    X, y = Xy[:, :-1], Xy[:, -1]
+
+    N = X.shape[1]
+    X_new = np.append(X, alpha * np.eye(N), axis=0)
+    y_new = np.append(y, np.zeros(N))
+    w, _residuals = nnls(X_new, y_new)
+    return w
 
 
 def bootstrap(X, B=1000, indexes=None, **kwargs):

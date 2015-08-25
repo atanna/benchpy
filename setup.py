@@ -42,7 +42,10 @@ setup_options = dict(
     packages=["benchpy"],
     classifiers=CLASSIFIERS,
     ext_modules=cythonize("benchpy/_speedups.pyx"),
-    requires=["numpy", "scipy", "prettytable"]
+    requires=["numpy", "scipy", "prettytable"],
+    extras_require={
+        "docs": ["Sphinx", "numpydoc"]
+    }
 )
 
 
