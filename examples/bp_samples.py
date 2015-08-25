@@ -43,7 +43,7 @@ def run_exception():
 
 
 def exception_sample():
-    res = bp.run([bp.bench(run_exception)])
+    res = bp.run([bp.bench("run_exception", run_exception)])
     print(res)
 
 
@@ -62,53 +62,39 @@ def html_sample(save=True, path=None, doc=None):
     # n_batches = 20
     # n_samples = 20
 
-    run_params = OrderedDict(max_batch=max_batch,
-                  n_batches=n_batches,
-                  n_samples=n_samples)
+    run_params = OrderedDict(max_batch=max_batch, n_batches=n_batches,
+                             n_samples=n_samples)
 
-    case = bp.bench(html_parse, data,
-                    run_params=run_params,
-                    func_name="html___with_gc")
+    case = bp.bench("html___with_gc", html_parse, data, run_params=run_params)
     path = path if path is not None else \
         get_path("html_parse_"+os.path.splitext(os.path.basename(doc))[0],
                  "", case=case)
     run_sample_case(case, save=save, path=path, path_suffix="gc")
 
     run_params["with_gc"] = False
-    case = bp.bench(html_parse, data,
-                    run_params=run_params,
-                    func_name="html_without_gc")
+    case = bp.bench("html_without_gc", html_parse, data, run_params=run_params)
     run_sample_case(case, save=save, path=path)
 
 
 def list_group_sample(save=True, path=None):
     n = 100
-    case = [bp.group("factorial",
-                   [bp.bench(factorial, n,
-                             func_name="math_!"),
-                    bp.bench(factorial_slow, n,
-                             func_name="slow_!")]),
-            bp.group("factorial without_gc",
-                   [bp.bench(factorial, n,
-                             func_name="math_!"),
-                    bp.bench(factorial_slow, n,
-                             func_name="slow_!")], with_gc=False),
-            bp.group("pow",
-                   [bp.bench(pow, n, n,
-                             func_name="math^"),
-                    bp.bench(pow_slow, n, n,
-                             func_name="simple^")]),
-            bp.group("pow_without_gc",
-                   [bp.bench(pow, n, n,
-                             func_name="math^"),
-                    bp.bench(pow_slow, n, n,
-                             func_name="simple^")], with_gc=False)]
+    case = [bp.group("factorial", [
+                bp.bench("math_!", factorial, n),
+                bp.bench("slow_!", factorial_slow, n)]),
+            bp.group("factorial without_gc", [
+                bp.bench("math_!", factorial, n),
+                bp.bench("slow!", factorial_slow, n)], with_gc=False),
+            bp.group("pow", [
+                bp.bench("math^", pow, n, n),
+                bp.bench("simple^", pow_slow, n, n)]),
+            bp.group("pow_without_gc", [
+                bp.bench("math^", pow, n, n),
+                bp.bench("simple^", pow_slow, n, n)], with_gc=False)]
     run_sample_case(case, save, name="factorial_group", path=path)
 
 
 def cycle_list_sample(save=True):
-    bench_list = [bp.bench(cycle_list, n,
-                           func_name="{} cycles".format(n))
+    bench_list = [bp.bench("{} cycles".format(n), cycle_list, n)
                   for n in range(100, 201, 100)]
     name = "Cycle list"
     case = [bp.group(name, bench_list,
@@ -123,8 +109,7 @@ def cycle_list_sample(save=True):
 
 
 def quick_noop_sample():
-    res = bp.run(bp.bench(noop,
-                          func_name="noop"),
+    res = bp.run(bp.bench("noop", noop),
                  n_samples=5,
                  max_batch=10,
                  n_batches=2,
@@ -135,15 +120,11 @@ def quick_noop_sample():
 def cycle_sample(**kwargs):
     n = 10
     group = bp.group("Cycle",
-                     [bp.bench(cycle_list, n,
-                               run_params=dict(with_gc=True),
-                               func_name="with_gc"),
-                      bp.bench(cycle_list, n,
-                               run_params=dict(with_gc=False),
-                               func_name="without_gc")],
-                     n_samples=2,
-                     max_batch=2,
-                     n_batches=2)
+                     [bp.bench("with_gc", cycle_list, n,
+                               run_params=dict(with_gc=True)),
+                      bp.bench("without_gc", cycle_list, n,
+                               run_params=dict(with_gc=False))],
+                     n_samples=2, max_batch=2, n_batches=2)
 
     run_sample_case(group, **kwargs)
 
@@ -202,20 +183,18 @@ def sample(f, *params, name=None,
                       max_batch=max_batch,
                       n_batches=n_batches)
 
-    case = bp.bench(f, *params, run_params=run_params,
-                    func_name=name+"with gc")
+    case = bp.bench(name + "with gc", f, *params, run_params=run_params)
     run_sample_case(case, save=save, path=path, path_suffix="gc")
 
     run_params["with_gc"] = False
-    case = bp.bench(f, *params, run_params=run_params,
-                    func_name=name+"without gc")
+    case = bp.bench(name + "without gc", f, *params, run_params=run_params)
     run_sample_case(case, save=save, path=path)
 
 
 if __name__ == "__main__":
-    html_sample()
+    # html_sample()
     # list_group_sample(True)
-    # cycle_list_sample()
+    cycle_list_sample()
     # cycle_sample()
     # noop_sample()
     # quick_noop_sample()
@@ -228,6 +207,3 @@ if __name__ == "__main__":
     # sample(cycle_list, 1000, max_batch=10, n_batches=10, n_samples=40)
     # sample(cycle_list, 100, max_batch=10, n_batches=10, n_samples=20)
     # sample(cycle_list, 100, max_batch=5, n_batches=2, n_samples=2)
-
-
-

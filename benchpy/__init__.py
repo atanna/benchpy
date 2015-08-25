@@ -12,7 +12,7 @@ from .display import plot_results, plot_features, save_info
 from .magic import load_ipython_extension
 
 
-def bench(f, *args, run_params=None, func_name="", **kwargs):
+def bench(label, f, *args, run_params=None, **kwargs):
     """
     :param f: function which measured
     :param args: args of f
@@ -21,18 +21,18 @@ def bench(f, *args, run_params=None, func_name="", **kwargs):
     :param kwargs: kwargs of f
     :return: Bench
     """
-    return Bench(func_name, functools.partial(f, *args, **kwargs),
+    return Bench(label, functools.partial(f, *args, **kwargs),
                  run_params or {})
 
 
-def group(name, group, **run_params):
+def group(label, group, **run_params):
     """
     :param name:
     :param group: list of Benches
     :param run_params:
     :return: Group
     """
-    return Group(name, group, run_params)
+    return Group(label, group, run_params)
 
 
 def run(bench_or_benches, *args, **kwargs):

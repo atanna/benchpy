@@ -471,7 +471,3 @@ def save_info(res, path=None, path_suffix="", with_plots=True,
                 t_without_gc=table["Time_without_gc"]
             )
         )
-
-
-
-
