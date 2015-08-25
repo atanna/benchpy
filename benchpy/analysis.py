@@ -272,11 +272,7 @@ def _mean_and_se(stat_values, stat=None, eps=1e-9):
     """
     mean_stat = np.mean(stat_values, axis=0)
     n = len(stat_values)
-    se_stat = np.std(stat_values, axis=0) * np.sqrt(n / (n-1))
-    if type(se_stat) is np.ndarray:
-        se_stat[se_stat < eps] = eps
-    else:
-        se_stat = max(se_stat, eps)
+    se_stat = np.maximum(np.std(stat_values, axis=0) * np.sqrt(n / (n-1)), eps)
     if stat is not None:
         mean_stat = 2 * stat - mean_stat
     return mean_stat, se_stat
