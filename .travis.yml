@@ -12,8 +12,8 @@ install:
   - conda create -q -n test-environment python=$TRAVIS_PYTHON_VERSION numpy scipy cython matplotlib
   - source activate test-environment
   - pip install nose prettytable
-  - python setup.py install
-script: nosetests
+  - python setup.py build_ext --inplace
+script: nosetests -s
 
 notifications:
   email: false
