@@ -106,7 +106,7 @@ def magic_benchpy(self, parameter_s='', cell=None):
     f = partial(exec, arg_str, glob)
 
     from . import run, bench
-    res = run(bench(f), with_gc=with_gc,
+    res = run(bench("<magic>", f), with_gc=with_gc,
               n_samples=n_samples,
               n_batches=n_batches,
               max_batch=max_batch,
