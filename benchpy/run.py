@@ -20,7 +20,7 @@ class Bench(namedtuple("Bench", "name f run_params")):
         return _run(self.f, *args, **kwargs)
 
 
-class Group(namedtuple("_Group", "name group run_params")):
+class Group(namedtuple("Group", "name group run_params")):
     def run(self, *args, **kwargs):
         kwargs.update(self.run_params)
         return GroupResult(self.name, [
