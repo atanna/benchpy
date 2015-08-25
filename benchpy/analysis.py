@@ -28,7 +28,7 @@ class Features(object):
                 _feature = feature
             else:
                 ndim = np.array(feature).ndim
-                _feature = np.array(list([feature]) *
+                _feature = np.array([feature] *
                                     np.prod(y.shape[:y.ndim-ndim])) \
                     .reshape(_shape)
             _features.append(_feature)
@@ -145,7 +145,6 @@ class StatMixin(object):
         self.stat_time = None
         self.regr = None
         self._ci_params = dict(gamma=gamma, type_ci=type_ci)
-
 
     @cached_property
     def time(self):

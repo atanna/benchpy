@@ -34,6 +34,9 @@ class VisualMixin(object):
     def save_info(self, *args, **kwargs):
         save_info(self, *args, **kwargs)
 
+    def get_tables(self, *args, **kwargs):
+        return [self.get_table(*args, **kwargs)]
+
     def get_table(self, measure=None, decimals=5):
         if measure is None:
             measure = self.time_measure
@@ -162,39 +165,40 @@ class VisualMixinGroup(object):
     def plot_features(self, **kwargs):
         return plot_features(self, **kwargs)
 
-    def _repr(self, table_keys=None, with_empty=True, with_features=True):
-        first_res = self.bench_results[0]
+    def save_info(self, *args, **kwargs):
+        save_info(self, *args, **kwargs)
+
+    def _repr(self, table_keys=None, with_features=True):
+        first_res = self.results[0]
+        while not isinstance(first_res, VisualMixin):
+            first_res = first_res.results[0]
         if table_keys is None:
             table_keys = \
                 first_res.default_table_keys(with_features=with_features)
         elif table_keys is "Full":
             table_keys = self.table_keys
         measure = first_res.time_measure
-        tables = [bm_res.get_table(measure) for bm_res in self.bench_results]
-        n_results = len(self.bench_results)
-        _table_keys = []
-        for key in table_keys:
-            n_empty_values = 0
-            for table in tables:
-                if key not in table:
-                    raise BenchException("'{}' is unknown key".format(key))
-                if not len(str(table[key])):
-                    n_empty_values += 1
-            if not with_empty and n_empty_values == n_results:
-                continue
-            _table_keys.append(key)
+        tables = self.get_tables(measure)
 
-        pretty_table = first_res._get_pretty_table_header(measure, _table_keys)
+        pretty_table = first_res._get_pretty_table_header(measure, table_keys)
         pretty_table.align = 'l'
-        for bm_res in self.bench_results:
-            table = bm_res.get_table(measure)
-            pretty_table.add_row([table[key] for key in _table_keys])
-        title = "\n{group:~^{n}}\n" \
-            .format(group=self.name, n=10)
-        return title + str(pretty_table)
+        for table in tables:
+            pretty_table.add_row([table[key] for key in table_keys])
+
+        return str(pretty_table)
+
+    def get_tables(self, measure, decimals=5):
+        tables = []
+        for res in self.results:
+            _tables = res.get_tables(measure, decimals=decimals)
+            for i, table in enumerate(_tables):
+                table["Name"] = "{}.{}".format(self.name, table["Name"])
+
+            tables += _tables
+        return tables
 
     def __repr__(self):
-        return self._repr(with_empty=False)
+        return self._repr()
 
 
 def plot_results(res, **kwargs):
@@ -287,11 +291,12 @@ def _plot_group(gr_res, labels=None, figsize=(25, 15),
                 separate=False, save=False, path=None,
                 **kwargs):
     if separate:
-        return [res.plot(figsize=figsize, **kwargs) for
-                res in gr_res.bench_results]
+        return [res.plot(figsize=figsize, save=save,separate=separate,
+                         **kwargs) for
+                res in gr_res.results]
 
-    list_res = gr_res.bench_results
-    n_res = len(gr_res.bench_results)
+    list_res = gr_res.results
+    n_res = len(gr_res.results)
     if labels is None:
         labels = list(range(n_res))
         for i, res in enumerate(list_res):
@@ -326,7 +331,7 @@ def plot_features(bm_res, s=180, alpha=0.4,
         if path is None:
             path = "features.jpg"
         name, ext = os.path.splitext(path)
-        for i, res in enumerate(bm_res.bench_results):
+        for i, res in enumerate(bm_res.results):
             plot_features(res, s=s, alpha=alpha,
                           figsize=figsize, fontsize=fontsize,
                           save=save,
@@ -383,7 +388,8 @@ def save_plot(fig, path=None, figsize=(25, 15)):
 
 
 def save_info(res, path=None, path_suffix="", with_plots=True,
-              plot_params=None, figsize=(20, 12), fontsize=18):
+              plot_params=None, prefix_name="",
+              figsize=(20, 12), fontsize=18):
     """
     Save information about benchmarks and time plots.
     """
@@ -391,14 +397,22 @@ def save_info(res, path=None, path_suffix="", with_plots=True,
         path = "res_info"
     from .run import GroupResult, BenchResult
     results = []
+    _name = ""
     if isinstance(res, GroupResult):
-        results = res.bench_results
+        results = res.results
+        _name = res.name
     if isinstance(res, list):
         results = res
+
     for i, _res in enumerate(results):
         save_info(_res, path=path, path_suffix=str(path_suffix)+str(i),
                   with_plots=with_plots,
-                  plot_params=plot_params, figsize=figsize, fontsize=fontsize)
+                  plot_params=plot_params,
+                  figsize=figsize, fontsize=fontsize,
+                  prefix_name="{}{}{}"
+                  .format(prefix_name,
+                          '.' if len(_name) and len(prefix_name) else "",
+                          _name))
     if len(results):
         return
 
@@ -456,7 +470,10 @@ def save_info(res, path=None, path_suffix="", with_plots=True,
     with open("{}/report.html".format(path), "at") as f:
         f.write(
             template.format(
-                name=res.name.capitalize(),
+                name="{}{}{}"
+                    .format(prefix_name,
+                            "." if len(prefix_name) else "",
+                            res.name.capitalize()),
                 features_path=features_path,
                 plot_path=plot_path,
                 time_measure=res.time_measure,

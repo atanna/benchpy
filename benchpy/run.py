@@ -35,7 +35,7 @@ class BenchResult(StatMixin, VisualMixin):
 class GroupResult(VisualMixinGroup):
     def __init__(self, name, results):
         self.name = name
-        self.bench_results = results
+        self.results = results
         res = results[0]
         self.n_batches = res.n_batches
         self.n_samples = res.n_samples

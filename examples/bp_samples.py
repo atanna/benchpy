@@ -29,14 +29,14 @@ def html_sample(save=True, path=None, doc=None):
     run_params = OrderedDict(max_batch=max_batch, n_batches=n_batches,
                              n_samples=n_samples)
 
-    case = bp.bench("html___with_gc", html_parse, data, run_params=run_params)
+    case = bp.bench("html with_gc", html_parse, data, run_params=run_params)
     path = path if path is not None else \
         get_path("html_parse_"+os.path.splitext(os.path.basename(doc))[0],
                  "", case=case)
     run_sample_case(case, save=save, path=path, path_suffix="gc")
 
     run_params["with_gc"] = False
-    case = bp.bench("html_without_gc", html_parse, data, run_params=run_params)
+    case = bp.bench("html without_gc", html_parse, data, run_params=run_params)
     run_sample_case(case, save=save, path=path)
 
 
@@ -49,7 +49,7 @@ def get_path(name="", params=None, max_batch=-1, n_batches=-1,
                         max_batch=case.run_params.get('max_batch', -1),
                         n_batches=case.run_params.get('n_batches', -1),
                         n_samples=case.run_params.get('n_samples', -1))
-    dir_results = "results_fixed_cpu_3"
+    dir_results = "results"
 
     if max_batch > 0:
         inter_folder = "/{max_batch}_{n_batches}_{n_samples}/"\

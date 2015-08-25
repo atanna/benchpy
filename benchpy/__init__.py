@@ -46,6 +46,8 @@ def run(bench_or_benches, *args, **kwargs):
     :return:
     """
     if isinstance(bench_or_benches, list):
-        return [run(bench, *args, **kwargs) for bench in bench_or_benches]
+        from .run import GroupResult
+        return GroupResult("", [run(bench, *args, **kwargs)
+                            for bench in bench_or_benches])
     else:
         return bench_or_benches.run(*args, **kwargs)
