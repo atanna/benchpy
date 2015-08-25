@@ -10,6 +10,8 @@ import numpy as np
 
 from .analysis import StatMixin
 from .display import VisualMixin, VisualMixinGroup
+from .garbage import gc_manager
+from ._speedups import time_loop
 
 
 class Bench(namedtuple("Bench", "name f run_params")):
@@ -58,8 +60,6 @@ def _run(f, func_name="",
     (note: multiprocessing does not work with magic function benchpy)
     :return: BenchResult
     """
-    from ._gc_time import get_time
-
     n_batches = min(max_batch, n_batches)
     # batch_sizes are uniformly distributed on [0, max_batch]
     # and sorted in ascending order
@@ -95,3 +95,45 @@ def _run(f, func_name="",
                        batch_sizes=batch_sizes,
                        with_gc=with_gc,
                        func_name=func_name)
+
+
+def noop_time_preprocessing(batch_sizes):
+    return dict((batch, time_loop(noop, batch)) for batch in batch_sizes)
+
+
+def noop_time(batch, dict_noop_time=None):
+    """
+    Return time of empty function, which has run batch times.
+    :param batch:
+    :param dict_noop_time:
+    :return:
+    """
+    if dict_noop_time is None:
+        dict_noop_time = {}  # JFY `dict_noop_time` is always `None`.
+    return dict_noop_time.get(batch, time_loop(noop, batch))
+
+
+def noop(*args, **kwargs):
+    """A function which does nothing."""
+
+
+def _warm_up(f, n=2):
+    for i in range(n):
+        f()
+
+
+def get_time(args):
+    """
+    Return time of running function `f` the `batch` times.
+    :param args: tuple with
+    f - function,
+    batch - number of the executions in cycle
+    with_gc - flag to enable/disable Garbage Collector
+    with_callback - flag to use callback function which evaluate
+    collections time (useful only with python version >= 3.3)
+    """
+    f, batch, with_gc, with_callback = args
+    _warm_up(f)
+    with gc_manager(with_gc and with_callback) as m:
+        time = max(time_loop(f, batch) - noop_time(batch), 0.)
+        return time, m.collection_time
