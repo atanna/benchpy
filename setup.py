@@ -5,7 +5,7 @@ from Cython.Build import cythonize
 
 DISTNAME = "benchpy"
 DESCRIPTION = __doc__
-LONG_DESCRIPTION = open("README.md").read()
+LONG_DESCRIPTION = open("README.rst").read()
 MAINTAINER = "Ann Atamanova"
 MAINTAINER_EMAIL = "anne.atamanova@gmail.com"
 LICENSE = "MIT"
