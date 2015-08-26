@@ -41,6 +41,7 @@ class GroupResult(VisualMixinGroup):
         self.n_batches = res.n_batches
         self.n_samples = res.n_samples
         self.batch_sizes = res.batch_sizes
+        self.batch_results = self.get_list_batch_results(name)
 
 
 def _run(f, func_name="",
@@ -77,7 +78,9 @@ def _run(f, func_name="",
 
     full_time = np.zeros((n_samples, n_batches))
     gc_time = np.zeros((n_samples, n_batches))
-    est_time_for_sample = predict_waiting_time_for_sample(f, with_gc, batch_sizes)
+    est_time_for_sample = predict_waiting_time_for_sample(f,
+                                                          with_gc,
+                                                          batch_sizes)
 
     start_t = ticker()
     for i in range(n_samples):
@@ -140,7 +143,6 @@ def get_time(args):
     f - function,
     batch - number of the executions in cycle
     with_gc - flag to enable/disable Garbage Collector
-    collections time (useful only with python version >= 3.3)
     """
     f, batch, with_gc = args
     _warm_up(f)

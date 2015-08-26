@@ -87,8 +87,7 @@ class StatMixin(object):
         return self.X_y[:, 0, :].mean(axis=0)
 
 
-    @cached_property
-    def stat_table(self):
+    def get_stat_table(self):
         table = dict(Name=self.name,
                      Time=self.time,
                      CI=np.maximum(self.stat_time.ci, 0),
@@ -171,7 +170,7 @@ Stat = namedtuple("Stat", "mean std ci")
 
 def get_mean_stat(values, confidence=0.95):
     alpha = (1 - confidence) / 2
-    lowhigh = mquantiles(values, prob=[alpha, 1 - alpha], axis=0)
+    lowhigh = mquantiles(values, prob=[alpha, 1-alpha], axis=0)
     return Stat(np.mean(values, axis=0),
                 np.std(values, ddof=1, axis=0),
                 np.asarray(lowhigh))

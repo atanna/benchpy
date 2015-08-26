@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import absolute_import
+from functools import reduce
 
 import os
 from collections import OrderedDict
@@ -61,7 +62,7 @@ class VisualMixin(object):
         if x[0] == "R2"
         else (x[0], np.round(x[1] * w, decimals))
         if isinstance(x[1], float) or isinstance(x[1], np.ndarray)
-        else (x[0],x[1]), self.stat_table.items()))
+        else (x[0],x[1]), self.get_stat_table().items()))
 
         table["fit_info"] = self.get_nice_fit_info(table["fit_info"])
 
@@ -180,14 +181,22 @@ class VisualMixinGroup(object):
         return str(pretty_table)
 
     def get_tables(self, measure, decimals=5):
-        tables = []
-        for res in self.results:
-            _tables = res.get_tables(measure, decimals=decimals)
-            for i, table in enumerate(_tables):
-                table["Name"] = "{}.{}".format(self.name, table["Name"])
-
-            tables += _tables
+        tables = [bm_res.get_table(measure=measure, decimals=decimals)
+                  for bm_res in self.batch_results]
         return tables
+
+    def get_list_batch_results(self, prefix_name=""):
+        list_results = []
+        for res in self.results:
+            _prefix_name = "{}{}".format(prefix_name, '.' if len(prefix_name) else '')
+            if isinstance(res, VisualMixin):
+                name = "{}{}".format(_prefix_name, res.name)
+                res.name = name
+                list_results.append(res)
+            else:
+                list_results += res.get_list_batch_results(
+                    "{}{}".format(_prefix_name, self.name))
+        return list_results
 
     def __repr__(self):
         return self._repr()
@@ -240,7 +249,7 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
         ax.scatter(batch_sizes_, time_*w_measure, color=c, s=s, alpha=alpha)
     ax.scatter([], [], color=c, s=s, alpha=alpha, label=label+"time")
 
-    used_t_color = mixed_color(c, np.array([[0], [1.], [0.]]), 0.1)
+    used_t_color = mixed_color(c, np.array([[0], [1], [0]]), 0.1)
     for time_ in bm_res.y:
         ax.scatter(batch_sizes_, time_*w_measure, marker="*",
                    color=used_t_color, s=s/5)
@@ -290,7 +299,7 @@ def _plot_group(gr_res, labels=None, figsize=(25, 15),
                          **kwargs) for
                 res in gr_res.results]
 
-    list_res = gr_res.results
+    list_res = gr_res.batch_results
     n_res = len(gr_res.results)
     if labels is None:
         labels = list(range(n_res))
@@ -302,9 +311,11 @@ def _plot_group(gr_res, labels=None, figsize=(25, 15),
     fig = plt.figure(figsize=figsize)
     fig.add_subplot(111)
     add_text = True
+    cm = plt.get_cmap('gist_rainbow')
+    colors = [cm(1.*i/n_res) for i in range(n_res)]
     for i, res, label in zip(range(n_res), list_res, labels):
         d = dict(fig=fig, label=label, title=gr_res.name,
-                 c=np.random.rand(3, 1), add_text=add_text,
+                 c=colors[i], add_text=add_text,
                  shift=batch_shift * i)
         d.update(kwargs)
         fig = _plot_result(res, group_plot=True,
@@ -372,6 +383,8 @@ def plot_features(bm_res, s=180, alpha=0.4,
 def mixed_color(c0, c1=None, p=0.5):
     if c1 is None:
         c1 = np.array([[1], [0], [0]])
+    if len(c0) == 4:
+        c0 = np.array(c0[:-1])[:, np.newaxis]
     c = c0*p + c1*(1-p)
     return c / np.sum(c)
 
@@ -394,29 +407,24 @@ def save_info(res, path=None, path_suffix="", with_plots=True,
         path = "res_info"
     from .run import GroupResult, BenchResult
     results = []
-    _name = ""
     if isinstance(res, GroupResult):
-        results = res.results
-        _name = res.name
+        results = res.batch_results
     if isinstance(res, list):
         results = res
 
     for i, _res in enumerate(results):
-        save_info(_res, path=path, path_suffix=str(path_suffix)+str(i),
+        save_info(_res, path=path, path_suffix="~name",
                   with_plots=with_plots,
                   plot_params=plot_params,
-                  figsize=figsize, fontsize=fontsize,
-                  prefix_name="{}{}{}"
-                  .format(prefix_name,
-                          '.' if len(_name) and len(prefix_name) else "",
-                          _name))
+                  figsize=figsize, fontsize=fontsize)
     if len(results):
         return
 
     if not isinstance(res, BenchResult):
         raise BenchException("Type of 'res' must belong to "
                              "{BenchRes, GroupRes, list}")
-
+    if path_suffix == "~name":
+        path_suffix = res.name
     if plot_params is None:
         plot_params = {}
     if isinstance(res, list):
@@ -467,10 +475,7 @@ def save_info(res, path=None, path_suffix="", with_plots=True,
     with open("{}/report.html".format(path), "at") as f:
         f.write(
             template.format(
-                name="{}{}{}"
-                    .format(prefix_name,
-                            "." if len(prefix_name) else "",
-                            res.name.capitalize()),
+                name=res.name.capitalize(),
                 features_path=features_path,
                 plot_path=plot_path,
                 time_measure=res.time_measure,
