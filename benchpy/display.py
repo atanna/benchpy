@@ -37,12 +37,9 @@ class VisualMixin(object):
     def get_tables(self, *args, **kwargs):
         return [self.get_table(*args, **kwargs)]
 
-    def get_table(self, measure=None, decimals=5):
-        if measure is None:
-            measure = self.time_measure
-        w = time_measures[measure]
+    def get_nice_fit_info(self, dict_fit_info):
         fit_info = ""
-        for key, value in self.fit_info.items():
+        for key, value in dict_fit_info.items():
             _val = value
             if isinstance(value, list) or isinstance(value, np.ndarray):
                 n = len(value)
@@ -53,24 +50,20 @@ class VisualMixin(object):
                     _val = value
             info = "{}: {}\n".format(key, _val)
             fit_info += info
-        fit_info = fit_info[:-1]
+        return fit_info[:-1]
 
-        table = dict(Name=str(self.name),
-                     Time=self.time,
-                     CI=self.ci,
-                     Std=self.std,
-                     Min=self.min,
-                     Max=self.max,
-                     R2=self.r2,
-                     Features_time=self.features_time,
-                     gc_time=self.gc_time,
-                     Time_without_gc=self.predicted_time_witout_gc,
-                     fit_info=str(fit_info))
+    def get_table(self, measure=None, decimals=5):
+        if measure is None:
+            measure = self.time_measure
+        w = time_measures[measure]
+
         table = dict(map(lambda x: (x[0], np.round(x[1], decimals))
         if x[0] == "R2"
         else (x[0], np.round(x[1] * w, decimals))
         if isinstance(x[1], float) or isinstance(x[1], np.ndarray)
-        else (x[0],x[1]), table.items()))
+        else (x[0],x[1]), self.stat_table.items()))
+
+        table["fit_info"] = self.get_nice_fit_info(table["fit_info"])
 
         return table
 
@@ -242,12 +235,13 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
     batch_sizes_ = bm_res.batch_sizes + batch_shift
     measure = bm_res.time_measure
     w_measure = time_measures[measure]
+    X, y, stat_w = bm_res.info_to_plot()
     for time_ in bm_res.full_time:
         ax.scatter(batch_sizes_, time_*w_measure, color=c, s=s, alpha=alpha)
     ax.scatter([], [], color=c, s=s, alpha=alpha, label=label+"time")
 
     used_t_color = mixed_color(c, np.array([[0], [1.], [0.]]), 0.1)
-    for time_ in bm_res.features.y:
+    for time_ in bm_res.y:
         ax.scatter(batch_sizes_, time_*w_measure, marker="*",
                    color=used_t_color, s=s/5)
     ax.scatter([], [], marker="*", color=used_t_color, s=s/5,
@@ -263,13 +257,15 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
      for X_y, stat_w in zip(bm_res.arr_X_y, bm_res.arr_st_w)]
 
     mean_label = "{}_mean".format(label) if len(label) else "mean"
-    ax.plot(batch_sizes_, bm_res.y*w_measure,
+    ax.plot(batch_sizes_, y*w_measure,
             color=c, linewidth=linewidth, label=mean_label)
-    if bm_res.stat_w is not None:
-        w = bm_res.stat_w.mean
+
+    if stat_w is not None:
+        w = stat_w.mean
+
         regr_label = "{}_regr, w={}".format(label, np.round(w, 5)) \
             if len(label) else "regr"
-        ax.plot(batch_sizes_, bm_res.X.dot(w)*w_measure, 'r--', color=c,
+        ax.plot(batch_sizes_, X.dot(w)*w_measure, 'r--', color=c,
                 linewidth=linewidth,
                 label=regr_label)
     ax.legend(fontsize=fontsize)
@@ -339,13 +335,15 @@ def plot_features(bm_res, s=180, alpha=0.4,
     batch_sizes = bm_res.batch_sizes
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(1, 1, 1)
-    W = bm_res.stat_w.mean
+    X, y, stat_w = bm_res.info_to_plot()
+    W = stat_w.mean
+
     n_features = len(bm_res.feature_names)
     cm = plt.get_cmap('gist_rainbow')
     colors = [cm(1.*i/n_features) for i in range(n_features)]
     measure = bm_res.time_measure
     w_measure = time_measures[measure]
-    for i, x in enumerate(bm_res.X.T):
+    for i, x in enumerate(X.T):
         c = colors[i]
         w = W[i]
         w_x = w*x*w_measure
@@ -355,13 +353,13 @@ def plot_features(bm_res, s=180, alpha=0.4,
                    .format(i, w))
         ax.plot(batch_sizes, w_x, color=c)
 
-    W_from, W_to = bm_res.stat_w.ci.T
-    ax.plot(batch_sizes, bm_res.X.dot(W)*w_measure, color='b', label="regr")
-    ax.plot(batch_sizes, bm_res.X.dot(W_from)*w_measure, 'k--', color='b')
-    ax.plot(batch_sizes, bm_res.X.dot(W_to)*w_measure, 'k--',
+    W_from, W_to = stat_w.ci.T
+    ax.plot(batch_sizes, X.dot(W)*w_measure, color='b', label="regr")
+    ax.plot(batch_sizes, X.dot(W_from)*w_measure, 'k--', color='b')
+    ax.plot(batch_sizes, X.dot(W_to)*w_measure, 'k--',
             color='b', label='border_regr')
-    ax.plot(batch_sizes, bm_res.y*w_measure, 'bo', color='r', label="mean")
-    ax.plot(batch_sizes, bm_res.y*w_measure, color='r')
+    ax.plot(batch_sizes, y*w_measure, 'bo', color='r', label="mean")
+    ax.plot(batch_sizes, y*w_measure, color='r')
     ax.legend(fontsize=fontsize)
     ax.set_xlabel('Batch_sizes', fontsize=fontsize)
     ax.set_ylabel('Time, {}'.format(measure), fontsize=fontsize)

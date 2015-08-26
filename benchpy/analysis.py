@@ -65,9 +65,28 @@ class StatMixin(object):
             gc_time = gc_time[ind]
         self.gc_time = np.mean(np.mean(gc_time, axis=0)
                                / self.batch_sizes)
-        self.features = Features(["batch", "const"],
-                                 [self.batch_sizes, 1.],
-                                 y=y)
+
+        self.feature_names = np.array(["batch", "const"])
+        features = [self.batch_sizes, 1.]
+        self.y = y
+        self.n = len(self.feature_names)
+        _shape = y.shape + (1,)
+        # _shape = (n_samples, n_batches, 1)  - shape of one of the
+        # feature_columns in full fitting matrix X
+        # with shape (n_samples, n_batches, n_features)
+        # note: n_samples is number of used samples
+        # (it can be less then what has been measured)
+        # The last feature_column in matrix X_y is y (~time)
+        # X_y.shape = (n_samples, n_batches, n_features+1)
+        # if feature has less dimension (f.e. `const`) then y has,
+        # we use extension of it.
+        self.X_y = np.concatenate(
+            [np.array([feature] *
+                      np.prod(y.shape[:y.ndim-np.array(feature).ndim]))
+            .reshape(_shape) for feature in features] +
+            [y.reshape(_shape)],
+            axis=2)
+        self.X = self.X_y[:, :, :-1]
 
     @cached_property
     def time(self):
@@ -80,80 +99,43 @@ class StatMixin(object):
                 get_mean_stat(self._av_time, self.confidence)
         return self.stat_time.mean
 
-    @property
-    def ci(self):
-        if self.stat_time is None:
-            self.time()
-        _ci = self.stat_time.ci
-        _ci[0] = max(_ci[0], 0.)
-        return _ci
-
-    @property
-    def std(self):
-        if self.stat_time is None:
-            self.time()
-        return self.stat_time.std
-
-    @cached_property
-    def min(self):
-        return np.min(self._av_time)
-
-    @cached_property
-    def max(self):
-        return np.max(self.full_time / self.batch_sizes[:, np.newaxis].T)
 
     @cached_property
     def _av_time(self):
-        return self.features.y / self.batch_sizes[:, np.newaxis].T
+        return self.y / self.batch_sizes[:, np.newaxis].T
 
-    @property
-    def stat_w(self):
-        if self.regr is None:
-            self.time()
-        return self.regr.stat_w
-
-    @cached_property
-    def X(self):
-        return self.features.X.mean(axis=0)
-
-    @cached_property
-    def y(self):
-        return self.features.y.mean(axis=0)
-
-    @cached_property
-    def features_time(self):
-        return self.x_y[:-1] * self.regr.stat_w.mean
-
-    @property
-    def predicted_time_witout_gc(self):
-        return self.time - self.gc_time
-
-    @property
-    def r2(self):
-        if self.regr is None:
-            self.time()
-        return self.regr.r2
-
-    @cached_property
-    def fit_info(self):
-        return dict(with_gc=self.with_gc,
-                    samples=self.n_samples,
-                    batches=self.batch_sizes)
 
     @cached_property
     def x_y(self):
         assert self.batch_sizes[0] == 1
-        return self.features.X_y[:, 0, :].mean(axis=0)
+        return self.X_y[:, 0, :].mean(axis=0)
 
-    @property
-    def feature_names(self):
-        return self.features.feature_names
+
+    @cached_property
+    def stat_table(self):
+        table = dict(Name=self.name,
+                     Time=self.time,
+                     CI=np.maximum(self.stat_time.ci, 0),
+                     Std=self.stat_time.std,
+                     Min=np.min(self._av_time),
+                     Max=np.max(self._av_time),
+                     R2=self.regr.r2,
+                     Features_time=self.x_y[:-1]*self.regr.stat_w.mean,
+                     gc_time=self.gc_time,
+                     Time_without_gc=self.time-self.gc_time,
+                     fit_info=dict(with_gc=self.with_gc,
+                                   samples=self.n_samples,
+                                   batches=self.batch_sizes))
+        return table
+
+    def info_to_plot(self):
+        return self.X.mean(axis=0), self.y.mean(axis=0), self.regr.stat_w
 
     def regression(self, B=1000, **kwargs):
-        n_samples = len(self.features.X_y)
+        n_samples = len(self.X_y)
         indices = np.random.randint(0, n_samples, size=(B, self.n_batches))
         # bootstrap
-        resamples = self.features.X_y[indices, np.arange(self.n_batches)]
+        resamples = self.X_y[indices, np.arange(self.n_batches)]
         arr_st_w = np.array([ridge_regression(resample)
                              for resample in resamples])
         stat_w = get_mean_stat(arr_st_w, **kwargs)
@@ -164,8 +146,8 @@ class StatMixin(object):
         stat_y = get_mean_stat(arr_st_y, **kwargs)
 
         w = stat_w.mean
-        w_r2 = np.array([r2(self.features.y, X.dot(w))
-                         for X in self.features.X]).mean()
+        w_r2 = np.array([r2(self.y, X.dot(w))
+                         for X in self.X]).mean()
         return Regression(stat_w, stat_y, w_r2)
 
 
@@ -205,7 +187,7 @@ def ridge_regression(Xy, alpha=0.15):
 def r2(y_true, y_pred):
     std = y_true.std()
     return 1 - np.mean((y_true-y_pred)**2) / std if std \
-        else np.inf * (1 - np.mean((y_true-y_pred)**2))
+        else np.inf
 
 
 Stat = namedtuple("Stat", "mean std ci")
