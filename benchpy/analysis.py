@@ -14,13 +14,10 @@ Regression = namedtuple("Regression", 'stat_w stat_y r2')
 
 
 class Features(object):
-    def __init__(self, feature_names, features, y,
-                 main_feature="batch",
-                 fixed_dependency=False):
+    def __init__(self, feature_names, features, y):
         self.feature_names = np.array(feature_names)
         self.y = y
-        self.main_feature = main_feature
-        _shape = (y.shape) +(1,)
+        _shape = y.shape + (1,)
         _features = []
         for feature in features:
             if np.array(feature).ndim == y.ndim:
@@ -33,52 +30,6 @@ class Features(object):
             _features.append(_feature)
         _features.append(y.reshape(_shape))
         self.X_y = np.concatenate(_features, axis=2)
-        self._renumbered()
-        if fixed_dependency:
-            self.fixed_dependency()
-
-    def delete(self, features):
-        indexes = self._indexes(features)
-        self._del_id(indexes)
-
-    def delete_all_features_except(self, features):
-        indexes = self._indexes(features)
-        del_indexes = list(set(range(self.n)) - set(indexes))
-        self._del_id(del_indexes)
-
-    def delete_gc(self):
-        gc_features = self._get_gc_features()
-        self.delete(gc_features)
-
-    def get_X_without(self, features):
-        _indexes = self._indexes(features)
-        indexes = list(set(range(self.n)) - set(_indexes))
-        return self.X[:, :, indexes]
-
-    def get_X_with(self, features):
-        indexes = self._indexes(features)
-        return self.X[:, :, indexes]
-
-    def _get_gc_features(self):
-        return list(filter(lambda x: x.startswith("gc"), self.feature_names))
-
-    def _del_id(self, indexes):
-        self.X_y = np.delete(self.X_y, indexes, axis=2)
-        self.feature_names = np.delete(self.feature_names, indexes)
-        self._renumbered()
-
-    def _indexes(self, features):
-        return [self._get_id(feature) for feature in features]
-
-    def _renumbered(self):
-        for i, feature in enumerate(self.feature_names):
-            self._set_id(feature, i)
-
-    def _get_id(self, feature):
-        return self.__dict__.get(feature, -1)
-
-    def _set_id(self, feature, i):
-        self.__dict__[feature] = i
 
     @property
     def X(self):
@@ -87,30 +38,6 @@ class Features(object):
     @property
     def n(self):
         return len(self.feature_names)
-
-    def is_depended(self, X=None, threshold=1e-1):
-        if X is None:
-            X = self.X
-        if X.shape[2] < 2:
-            return False
-        s = np.linalg.svd(X)[1].sum(axis=0)
-        return sum(s < threshold * len(X))
-
-    def fixed_dependency(self, threshold=1e-1):
-        if self.X.shape[1] == 1:
-            self.delete_all_features_except([self.main_feature])
-
-        if not self.is_depended(threshold=threshold):
-            return
-
-        for i, feature in enumerate(self.feature_names[::-1]):
-            if feature != self.main_feature:
-                dep = self.is_depended(self.get_X_without([feature]), threshold)
-                if not dep:
-                    self.delete([feature])
-                    return
-        self.delete(self.feature_names[-2:])
-        self.fixed_dependency()
 
 
 class StatMixin(object):
@@ -243,9 +170,10 @@ class StatMixin(object):
         resamples = self.features.X_y[indices, np.arange(self.n_batches)]
         arr_X_y = resamples
         arr_st_w = bootstrap(ridge_regression, self.features.X_y, resamples)
-        mean_st_w = ridge_regression(np.concatenate(
-            self.features.X_y / self.batch_sizes[:, np.newaxis], axis=0))
-        stat_w = get_mean_stat(arr_st_w, mean_val=mean_st_w, **kwargs)
+        # XXX apparently, I'm doing something wrong here.
+        # mean_st_w = ridge_regression(np.concatenate(
+        #     self.features.X_y / self.batch_sizes[:, np.newaxis], axis=0))
+        stat_w = get_mean_stat(arr_st_w, mean_val=None, **kwargs)
 
         self.arr_X_y = arr_X_y
         self.arr_st_w = arr_st_w
