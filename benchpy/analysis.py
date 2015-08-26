@@ -11,30 +11,6 @@ from .utils import cached_property
 Regression = namedtuple("Regression", 'stat_w stat_y r2')
 
 
-class Features(object):
-    def __init__(self, feature_names, features, y):
-        self.feature_names = np.array(feature_names)
-        self.y = y
-        self.n = len(self.feature_names)
-        _shape = y.shape + (1,)
-        # _shape = (n_samples, n_batches, 1)  - shape of one of the
-        # feature_columns in full fitting matrix X
-        # with shape (n_samples, n_batches, n_features)
-        # note: n_samples is number of used samples
-        # (it can be less then what has been measured)
-        # The last feature_column in matrix X_y is y (~time)
-        # X_y.shape = (n_samples, n_batches, n_features+1)
-        # if feature has less dimension (f.e. `const`) then y has,
-        # we use extension of it.
-        self.X_y = np.concatenate(
-            [np.array([feature] *
-                      np.prod(y.shape[:y.ndim-np.array(feature).ndim]))
-            .reshape(_shape) for feature in features] +
-            [y.reshape(_shape)],
-            axis=2)
-        self.X = self.X_y[:, :, :-1]
-
-
 class StatMixin(object):
     def __init__(self, full_time, batch_sizes, with_gc,
                  gc_time=None, func_name="",
@@ -177,9 +153,9 @@ def ridge_regression(Xy, alpha=0.15):
     Xy = np.atleast_2d(Xy)
     X, y = Xy[:, :-1], Xy[:, -1]
 
-    N = X.shape[1]
-    X_new = np.append(X, alpha * np.eye(N), axis=0)
-    y_new = np.append(y, np.zeros(N))
+    M = X.shape[1]
+    X_new = np.append(X, alpha * np.eye(M), axis=0)
+    y_new = np.append(y, np.zeros(M))
     w, _residuals = nnls(X_new, y_new)
     return w
 
