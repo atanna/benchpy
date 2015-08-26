@@ -5,6 +5,7 @@ from __future__ import absolute_import
 from collections import namedtuple
 from itertools import repeat
 from multiprocessing import Pool
+import os
 
 import numpy as np
 
@@ -44,7 +45,7 @@ class GroupResult(VisualMixinGroup):
 
 def _run(f, func_name="",
          n_samples=10, max_batch=100, n_batches=10,
-         with_gc=True, multi=True):
+         with_gc=True, n_jobs=1):
     """
 
     :param f: function which measured (without arguments)
@@ -54,7 +55,8 @@ def _run(f, func_name="",
     :param n_batches: number of batches
     :param with_gc: flag for enable/disable Garbage Collector
      which measure gc working time (use only with gc, python version >= 3.3)
-    :param multi: flag for use/not use multiprocessing
+    :param n_jobs: the number of jobs to run in parallel.
+    If -1, then the number of jobs is set to the number of cores.
     (note: multiprocessing does not work with magic function benchpy)
     :return: BenchResult
     """
@@ -69,12 +71,15 @@ def _run(f, func_name="",
         batch_sizes[0] = 1
     n_batches = len(batch_sizes)
 
+    if n_jobs == -1:
+        n_jobs = os.cpu_count() or 1
+
     full_time = np.zeros((n_samples, n_batches))
     gc_time = np.zeros((n_samples, n_batches))
 
     for i in range(n_samples):
-        if multi:
-            with Pool() as p:
+        if n_jobs > 1:
+            with Pool(n_jobs) as p:
                 full_time[i], gc_time[i] = \
                     zip(*p.map(get_time, zip(repeat(f),
                                              batch_sizes,

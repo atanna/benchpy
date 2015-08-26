@@ -109,8 +109,7 @@ def magic_benchpy(self, parameter_s='', cell=None):
     res = run(bench("<magic>", f), with_gc=with_gc,
               n_samples=n_samples,
               n_batches=n_batches,
-              max_batch=max_batch,
-              multi=False)
+              max_batch=max_batch)
 
     if 'i' in opts:
         print(res._repr("Full"))
