@@ -239,13 +239,14 @@ class StatMixin(object):
 
     def regression(self, B=1000, **kwargs):
         n_samples = len(self.features.X_y)
-        indexes = np.random.randint(0, n_samples, size=(B, self.n_batches))
-        stat_w, arr_X_y, arr_st_w = \
-            get_statistic(self.features.X_y, ridge_regression,
-                          with_arr_values=True,
-                          bootstrap_kwargs=
-                          dict(indexes=(indexes, np.arange(self.n_batches))),
-                          **kwargs)
+        indices = np.random.randint(0, n_samples, size=(B, self.n_batches))
+        resamples = self.features.X_y[indices, np.arange(self.n_batches)]
+        arr_X_y = resamples
+        arr_st_w = bootstrap(ridge_regression, self.features.X_y, resamples)
+        mean_st_w = ridge_regression(np.concatenate(
+            self.features.X_y / self.batch_sizes[:, np.newaxis], axis=0))
+        stat_w = get_mean_stat(arr_st_w, mean_val=mean_st_w, **kwargs)
+
         self.arr_X_y = arr_X_y
         self.arr_st_w = arr_st_w
         arr_st_y = np.array([self.x_y[:-1].dot(w) for w in arr_st_w])
@@ -290,26 +291,7 @@ def ridge_regression(Xy, alpha=0.15):
     return w
 
 
-def resample(X, B=1000, indexes=None, **kwargs):
-    """
-    Return new `B` samples, where every sample has n elements and i-th element
-    of sample be chosen from i-th column of the matrix X,
-    where (n,m) is X shape.
-    If indexes is not None, we return X[indexes]
-    :param X: matrix for bootstrapping
-    :param B: number of samples (useful only if indexes is None)
-    :param indexes:
-    :param kwargs:
-    """
-    n = len(X)
-    if indexes is None:
-        indexes = np.random.random_integers(0, n-1, size=(B, n))
-    return X[indexes]
-
-
-def get_statistic(values, f_stat, with_arr_values=False,
-                  bootstrap_kwargs=None,
-                  **ci_kwargs):
+def bootstrap(statistic, X, resamples):
     """
     ``\hat(theta|values) = f_stat(values)``
     Count estimation of statistic ``theta`` (with confidence interval and se)
@@ -320,26 +302,11 @@ def get_statistic(values, f_stat, with_arr_values=False,
     :param bootstrap_kwargs: parameters for bootstrapping
     :param ci_kwargs: parameters for confidence interval.
     """
-    if bootstrap_kwargs is None:
-        bootstrap_kwargs = {}
-    arr_values = resample(values, **bootstrap_kwargs)
-    arr_stat = []
-    for _values in arr_values:
-        try:
-            arr_stat.append(f_stat(_values))
-        except Exception:
-            continue
+    res = []
+    for resample in resamples:
+        res.append(statistic(resample))
 
-    mean_val = None
-    try:
-        mean_val = f_stat(values)
-    except Exception:
-        pass
-    arr_stat = np.array(arr_stat)
-    if with_arr_values:
-        return get_mean_stat(arr_stat, mean_val=mean_val, **ci_kwargs), \
-               arr_values, arr_stat
-    return get_mean_stat(arr_stat, mean_val=mean_val, **ci_kwargs)
+    return np.array(res)
 
 
 def r2(y_true, y_pred):
@@ -385,4 +352,4 @@ def get_mean_stat(values, type_ci="efr", gamma=0.95, mean_val=None):
     else:
         raise ValueError("unknown method: {0!r}".format(method))
 
-    return Stat(mean_stat, se_stat, np.array([low, high]).T)
+    return Stat(mean_stat, se_stat, np.array([low, high]))
