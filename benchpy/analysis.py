@@ -17,27 +17,23 @@ class Features(object):
     def __init__(self, feature_names, features, y):
         self.feature_names = np.array(feature_names)
         self.y = y
+        self.n = len(self.feature_names)
         _shape = y.shape + (1,)
-        _features = []
-        for feature in features:
-            if np.array(feature).ndim == y.ndim:
-                _feature = feature
-            else:
-                ndim = np.array(feature).ndim
-                _feature = np.array([feature] *
-                                    np.prod(y.shape[:y.ndim-ndim])) \
-                    .reshape(_shape)
-            _features.append(_feature)
-        _features.append(y.reshape(_shape))
-        self.X_y = np.concatenate(_features, axis=2)
-
-    @property
-    def X(self):
-        return self.X_y[:, :, :-1]
-
-    @property
-    def n(self):
-        return len(self.feature_names)
+        # _shape = (n_samples, n_batches, 1)  - one of feature_column in
+        # full fitting matrix X with shape (n_samples, n_batches, n_features)
+        # note: n_samples is number of used samples
+        # (it can be less then what has been measured)
+        # The last feature_column in matrix X_y is y (~time)
+        # X_y.shape = (n_samples, n_batches, n_features+1)
+        # if feature has less dimension (f.e. `const`) then y has,
+        # we use extension of it.
+        self.X_y = np.concatenate(
+            [np.array([feature] *
+                      np.prod(y.shape[:y.ndim-np.array(feature).ndim]))
+            .reshape(_shape) for feature in features] +
+            [y.reshape(_shape)],
+            axis=2)
+        self.X = self.X_y[:, :, :-1]
 
 
 class StatMixin(object):
@@ -51,18 +47,22 @@ class StatMixin(object):
         self._init(gamma,  type_ci)
         self.init_features(full_time, gc_time)
 
-    def init_features(self, full_time, gc_time=None, alpha=0.4, threshold=10):
+    def init_features(self, full_time, gc_time=None, alpha=0.5,
+                      min_used_samples=10):
         y = full_time
-        if self.n_samples > threshold:
-            order = full_time.argsort(axis=0)
-            ind = (order, range(full_time.shape[1]))
-            self.n_used_samples = max(threshold, (int(alpha*self.n_samples)))
-            y = full_time[ind][:self.n_used_samples]
-            if gc_time is not None:
-                gc_time = gc_time[ind][:self.n_used_samples]
-        if gc_time is not None:
-            self.gc_time = np.mean(np.mean(gc_time, axis=0)
-                                   / self.batch_sizes)
+        if self.n_samples > min_used_samples:
+            # Reduce number of used samples to
+            # max(min_used_samples, $\alpha$*n_samples).
+            # choose best time samples
+            self.n_used_samples = \
+                max(min_used_samples, (int(alpha*self.n_samples)))
+            ind = (full_time.argsort(axis=0),
+                   range(full_time.shape[1]),
+                   slice(self.n_used_samples))
+            y = full_time[ind]
+            gc_time = gc_time[ind]
+        self.gc_time = np.mean(np.mean(gc_time, axis=0)
+                               / self.batch_sizes)
         self.features = Features(["batch", "const"],
                                  [self.batch_sizes, 1.],
                                  y=y)
