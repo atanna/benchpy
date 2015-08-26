@@ -28,6 +28,7 @@ class StatMixin(object):
     def init_features(self, full_time, gc_time, alpha=0.5,
                       min_used_samples=10):
         y = full_time
+        self.n_used_samples = self.n_samples
         if self.n_samples > min_used_samples:
             # Reduce number of used samples to
             # max(min_used_samples, $\alpha$*n_samples).
@@ -59,13 +60,8 @@ class StatMixin(object):
 
     @cached_property
     def time(self):
-        try:
-            self.regr = self.regression(confidence=self.confidence)
-            self.stat_time = self.regr.stat_y
-        except LinAlgError:
-            self.regr = None
-            self.stat_time = \
-                get_mean_stat(self._av_time, self.confidence)
+        self.regr = self.regression(confidence=self.confidence)
+        self.stat_time = self.regr.stat_y
         return self.stat_time.mean
 
     @cached_property

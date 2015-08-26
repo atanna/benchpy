@@ -74,7 +74,7 @@ def run_sample_case(case, save=True, name=None, path=None, **kwargs):
        path = get_path(name=name, case=case)
     print(path)
 
-    res = bp.run(case)
+    res = bp.run(case, n_jobs=-1)
     print(res)
 
     if save:
