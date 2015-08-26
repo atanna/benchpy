@@ -34,18 +34,21 @@ class StatMixin(object):
             # choose best time samples
             self.n_used_samples = \
                 max(min_used_samples, (int(alpha*self.n_samples)))
-            ind = (full_time.argsort(axis=0),
-                   range(full_time.shape[1]),
-                   slice(self.n_used_samples))
-            y = full_time[ind]
-            gc_time = gc_time[ind]
+            order = full_time.argsort(axis=0)
+
+            ind = (order, range(full_time.shape[1]))
+            self.n_used_samples = max(min_used_samples,
+                                      (int(alpha*self.n_samples)))
+            y = full_time[ind][:self.n_used_samples]
+            if gc_time is not None:
+                gc_time = gc_time[ind][:self.n_used_samples]
         self.gc_time = np.mean(np.mean(gc_time, axis=0)
                                / self.batch_sizes)
 
         self.feature_names = np.array(["batch", "const"])
         self.n = len(self.feature_names)
 
-        X_y = np.empty((self.n_samples, self.n_batches, self.n + 1))
+        X_y = np.empty((self.n_used_samples, self.n_batches, self.n + 1))
         X_y[:, :, 0] = self.batch_sizes
         X_y[:, :, 1] = 1
         X_y[:, :, 2] = y
