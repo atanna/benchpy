@@ -4,13 +4,14 @@ from __future__ import absolute_import
 
 import gc
 import sys
-import time
 
 # Monkey patch ``gc`` for Python version prior to 3.3.
 try:
     gc.callbacks
 except AttributeError:
     gc.callbacks = []
+
+from ._compat import ticker
 
 
 class TimingCallback(object):
@@ -27,9 +28,9 @@ class TimingCallback(object):
 
     def __call__(self, phase, info):
         if phase == "start":
-            self.start_time = time.clock()
+            self.start_time = ticker()
         elif phase == "stop":
-            self.collection_time += time.clock() - self.start_time
+            self.collection_time += ticker() - self.start_time
             del self.start_time
 
     def collect(self):
