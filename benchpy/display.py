@@ -90,9 +90,8 @@ class VisualMixin(object):
             measure = self.time_measure
         pretty_table = PrettyTable(list(
             map(lambda key:
-                "CI_{}[{}]"
-                .format(self.ci_params["type_ci"],
-                        self.ci_params["gamma"]) if key == "CI" else
+                "CI[{}]"
+                .format(self.confidence) if key == "CI" else
                 "Time ({})".format(measure) if key == "Time" else
                 "Features: {}".format(self.feature_names)
                 if key == "Features_time" else

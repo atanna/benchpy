@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from collections import namedtuple
-
 import numpy as np
+from collections import namedtuple
 from numpy.linalg import LinAlgError
 from scipy.optimize import nnls
 from scipy.stats.mstats import mquantiles
@@ -19,8 +18,9 @@ class Features(object):
         self.y = y
         self.n = len(self.feature_names)
         _shape = y.shape + (1,)
-        # _shape = (n_samples, n_batches, 1)  - one of feature_column in
-        # full fitting matrix X with shape (n_samples, n_batches, n_features)
+        # _shape = (n_samples, n_batches, 1)  - shape of one of the
+        # feature_columns in full fitting matrix X
+        # with shape (n_samples, n_batches, n_features)
         # note: n_samples is number of used samples
         # (it can be less then what has been measured)
         # The last feature_column in matrix X_y is y (~time)
@@ -38,14 +38,17 @@ class Features(object):
 
 class StatMixin(object):
     def __init__(self, full_time, batch_sizes, with_gc,
-                 gc_time=None, func_name="", gamma=0.95, type_ci="efr"):
+                 gc_time=None, func_name="",
+                 confidence=0.95):
         self.full_time = full_time
         self.n_samples, self.n_batches = full_time.shape
         self.batch_sizes = batch_sizes
         self.with_gc = with_gc
         self.name = func_name
-        self._init(gamma,  type_ci)
         self.init_features(full_time, gc_time)
+        self.confidence = confidence
+        self.stat_time = None
+        self.regr = None
 
     def init_features(self, full_time, gc_time=None, alpha=0.5,
                       min_used_samples=10):
@@ -67,20 +70,15 @@ class StatMixin(object):
                                  [self.batch_sizes, 1.],
                                  y=y)
 
-    def _init(self, gamma=0.95, type_ci="tquant"):
-        self.stat_time = None
-        self.regr = None
-        self._ci_params = dict(gamma=gamma, type_ci=type_ci)
-
     @cached_property
     def time(self):
         try:
-            self.regr = self.regression(**self._ci_params)
+            self.regr = self.regression(confidence=self.confidence)
             self.stat_time = self.regr.stat_y
         except LinAlgError:
             self.regr = None
             self.stat_time = \
-                get_mean_stat(self._av_time)
+                get_mean_stat(self._av_time, self.confidence)
         return self.stat_time.val
 
     @property
@@ -137,28 +135,16 @@ class StatMixin(object):
             self.time()
         return self.regr.r2
 
-    @property
-    def ci_params(self):
-        return self._ci_params
-
     @cached_property
     def fit_info(self):
         return dict(with_gc=self.with_gc,
                     samples=self.n_samples,
                     batches=self.batch_sizes)
 
-    @property
+    @cached_property
     def x_y(self):
-        if self.batch_sizes[0] == 1:
-            return get_mean_stat(self.features.X_y[:, 0, :], **self._ci_params)\
-                .val
-        else:
-            _x_y = np.mean(self.features.X_y / self.batch_sizes[:, np.newaxis],
-                           axis=(0, 1))
-            ind_const = self.features._get_id("const")
-            if ind_const > 0:
-                _x_y[ind_const] = 1.
-            return _x_y
+        assert self.batch_sizes[0] == 1
+        return self.features.X_y[:, 0, :].mean(axis=0)
 
     @property
     def feature_names(self):
@@ -167,15 +153,13 @@ class StatMixin(object):
     def regression(self, B=1000, **kwargs):
         n_samples = len(self.features.X_y)
         indices = np.random.randint(0, n_samples, size=(B, self.n_batches))
+        # bootstrap
         resamples = self.features.X_y[indices, np.arange(self.n_batches)]
-        arr_X_y = resamples
-        arr_st_w = bootstrap(ridge_regression, self.features.X_y, resamples)
-        # XXX apparently, I'm doing something wrong here.
-        # mean_st_w = ridge_regression(np.concatenate(
-        #     self.features.X_y / self.batch_sizes[:, np.newaxis], axis=0))
-        stat_w = get_mean_stat(arr_st_w, mean_val=None, **kwargs)
+        arr_st_w = np.array([ridge_regression(resample)
+                             for resample in resamples])
+        stat_w = get_mean_stat(arr_st_w, **kwargs)
 
-        self.arr_X_y = arr_X_y
+        self.arr_X_y = resamples
         self.arr_st_w = arr_st_w
         arr_st_y = np.array([self.x_y[:-1].dot(w) for w in arr_st_w])
         stat_y = get_mean_stat(arr_st_y, **kwargs)
@@ -219,65 +203,20 @@ def ridge_regression(Xy, alpha=0.15):
     return w
 
 
-def bootstrap(statistic, X, resamples):
-    """
-    ``\hat(theta|values) = f_stat(values)``
-    Count estimation of statistic ``theta`` (with confidence interval and se)
-    on values using bootstrapping.
-    :param values:
-    :param f_stat: function for `\theta` estimation
-    :param with_arr_values: flag to return bootstrap samples
-    :param bootstrap_kwargs: parameters for bootstrapping
-    :param ci_kwargs: parameters for confidence interval.
-    """
-    res = []
-    for resample in resamples:
-        res.append(statistic(resample))
-
-    return np.array(res)
-
-
 def r2(y_true, y_pred):
     std = y_true.std()
     return 1 - np.mean((y_true-y_pred)**2) / std if std \
         else np.inf * (1 - np.mean((y_true-y_pred)**2))
 
 
-def _mean_and_se(stat_values, stat=None):
-    """
-    Method for bootstrapping
-    Count mean and se. Use statistic in the bootstrap samples
-    :param stat_values: statistic values in the bootstrap samples
-    :param stat: statistic value in the full sample
-    :return: (mean(stat_values), se(stat_values))
-    """
-    mean_stat = np.mean(stat_values, axis=0)
-    se_stat = np.maximum(np.std(stat_values, ddof=1, axis=0),
-                         np.finfo(float).eps)
-    if stat is not None:
-        mean_stat = 2 * stat - mean_stat
-    return mean_stat, se_stat
-
-
-def get_mean_stat(values, type_ci="efr", gamma=0.95, mean_val=None):
-    method = type_ci    # better name
-    confidence = gamma  # better name
+def get_mean_stat(values, confidence=0.95):
     alpha = (1 - confidence) / 2
     if len(values) == 1:
         [value] = values
         return Stat(value, 0., np.array([value, value]))
 
-    mean_stat, se_stat = _mean_and_se(values, mean_val)
-    if method == "efr":
-        low, high = mquantiles(values, prob=[alpha, 1-alpha], axis=0)
-    elif method == "quant":
-        q = mquantiles(values - mean_stat, prob=[alpha, 1-alpha], axis=0)
-        low, high = mean_stat - q[1], mean_stat - q[0]
-    elif method == "tquant":
-        q = mquantiles((values - mean_stat) / se_stat,
-                       prob=[alpha, 1-alpha], axis=0)
-        low, high = mean_stat - se_stat * q[1], mean_stat - se_stat * q[0]
-    else:
-        raise ValueError("unknown method: {0!r}".format(method))
-
+    low, high = mquantiles(values, prob=[alpha, 1-alpha], axis=0)
+    mean_stat = np.mean(values, axis=0)
+    se_stat = np.maximum(np.std(values, ddof=1, axis=0),
+                         np.finfo(float).eps)
     return Stat(mean_stat, se_stat, np.array([low, high]))

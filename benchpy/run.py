@@ -68,8 +68,9 @@ def _run(f, func_name="",
     batch_sizes = \
         np.arange(int(max_batch), 0, -int(max_batch / n_batches))[::-1]
     # min of bath sizes should be 1
-    if n_batches > 1:
-        batch_sizes[0] = 1
+    if batch_sizes[0] > 1:
+        batch_sizes = np.concatenate([[1], batch_sizes])
+
     n_batches = len(batch_sizes)
 
     if n_jobs == -1:
