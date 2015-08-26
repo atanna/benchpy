@@ -45,9 +45,13 @@ def run(bench_or_benches, *args, **kwargs):
     :param kwargs: kwargs for _run
     :return:
     """
+    print("Run {}".format(bench_or_benches))
     if isinstance(bench_or_benches, list):
         from .run import GroupResult
-        return GroupResult("", [run(bench, *args, **kwargs)
+        res = GroupResult("", [run(bench, *args, **kwargs)
                             for bench in bench_or_benches])
     else:
-        return bench_or_benches.run(*args, **kwargs)
+        res = bench_or_benches.run(*args, **kwargs)
+    print(res)
+    print("Benchmark {} successful finished.".format(bench_or_benches))
+    return res

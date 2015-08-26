@@ -8,6 +8,7 @@ from multiprocessing import Pool
 import os
 
 import numpy as np
+import time
 
 from .analysis import StatMixin
 from .display import VisualMixin, VisualMixinGroup
@@ -76,8 +77,13 @@ def _run(f, func_name="",
 
     full_time = np.zeros((n_samples, n_batches))
     gc_time = np.zeros((n_samples, n_batches))
+    est_time_for_sample = predict_waiting_time_for_sample(f, with_gc, batch_sizes)
 
+    start_t = time.clock()
     for i in range(n_samples):
+        print("start {} sample ({}/{})".format(i, i, n_samples))
+        print("Estimated time to complete: {} s."
+          .format(est_time_for_sample*(n_samples - i)))
         if n_jobs > 1:
             with Pool(n_jobs) as p:
                 full_time[i], gc_time[i] = \
@@ -90,12 +96,19 @@ def _run(f, func_name="",
                 zip(*list(map(get_time, zip(repeat(f),
                                             batch_sizes,
                                             repeat(with_gc)))))
+        if not i:
+            est_time_for_sample = time.clock() - start_t
 
     return BenchResult(full_time,
                        gc_time=gc_time,
                        batch_sizes=batch_sizes,
                        with_gc=with_gc,
                        func_name=func_name)
+
+
+def predict_waiting_time_for_sample(f, with_gc, batch_sizes):
+    t = np.mean([get_time((f, 1, with_gc))[0] for _ in range(4)])
+    return np.sum(batch_sizes*t)
 
 
 def noop_time_preprocessing(batch_sizes):
