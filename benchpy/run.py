@@ -8,9 +8,9 @@ from multiprocessing import Pool
 import os
 
 import numpy as np
-import time
 
 from .analysis import StatMixin
+from ._compat import ticker
 from .display import VisualMixin, VisualMixinGroup
 from .garbage import gc_manager
 from ._speedups import time_loop
@@ -79,7 +79,7 @@ def _run(f, func_name="",
     gc_time = np.zeros((n_samples, n_batches))
     est_time_for_sample = predict_waiting_time_for_sample(f, with_gc, batch_sizes)
 
-    start_t = time.clock()
+    start_t = ticker()
     for i in range(n_samples):
         print("start {} sample ({}/{})".format(i, i, n_samples))
         print("Estimated time to complete: {} s."
@@ -97,7 +97,7 @@ def _run(f, func_name="",
                                             batch_sizes,
                                             repeat(with_gc)))))
         if not i:
-            est_time_for_sample = time.clock() - start_t
+            est_time_for_sample = ticker() - start_t
 
     return BenchResult(full_time,
                        gc_time=gc_time,
