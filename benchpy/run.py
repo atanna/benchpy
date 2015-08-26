@@ -2,17 +2,16 @@
 
 from __future__ import absolute_import
 
+import multiprocessing as mp
 from collections import namedtuple
 from itertools import repeat
-from multiprocessing import Pool
-import os
 
 import numpy as np
 
 from .analysis import StatMixin
-from ._compat import ticker
 from .display import VisualMixin, VisualMixinGroup
 from .garbage import gc_manager
+from ._compat import ticker
 from ._speedups import time_loop
 
 
@@ -74,7 +73,7 @@ def _run(f, func_name="",
     n_batches = len(batch_sizes)
 
     if n_jobs == -1:
-        n_jobs = os.cpu_count() or 1
+        n_jobs = mp.cpu_count()
 
     full_time = np.zeros((n_samples, n_batches))
     gc_time = np.zeros((n_samples, n_batches))
@@ -86,7 +85,7 @@ def _run(f, func_name="",
         print("Estimated time to complete: {} s."
           .format(est_time_for_sample*(n_samples - i)))
         if n_jobs > 1:
-            with Pool(n_jobs) as p:
+            with mp.Pool(n_jobs) as p:
                 full_time[i], gc_time[i] = \
                     zip(*p.map(get_time, zip(repeat(f),
                                              batch_sizes,
@@ -100,11 +99,8 @@ def _run(f, func_name="",
         if not i:
             est_time_for_sample = ticker() - start_t
 
-    return BenchResult(full_time,
-                       gc_time=gc_time,
-                       batch_sizes=batch_sizes,
-                       with_gc=with_gc,
-                       func_name=func_name)
+    return BenchResult(full_time, gc_time=gc_time, batch_sizes=batch_sizes,
+                       with_gc=with_gc, func_name=func_name)
 
 
 def predict_waiting_time_for_sample(f, with_gc, batch_sizes):
