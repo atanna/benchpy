@@ -266,7 +266,7 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
     ax.plot(batch_sizes_, bm_res.y*w_measure,
             color=c, linewidth=linewidth, label=mean_label)
     if bm_res.stat_w is not None:
-        w = bm_res.stat_w.val
+        w = bm_res.stat_w.mean
         regr_label = "{}_regr, w={}".format(label, np.round(w, 5)) \
             if len(label) else "regr"
         ax.plot(batch_sizes_, bm_res.X.dot(w)*w_measure, 'r--', color=c,
@@ -339,7 +339,7 @@ def plot_features(bm_res, s=180, alpha=0.4,
     batch_sizes = bm_res.batch_sizes
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(1, 1, 1)
-    W = bm_res.stat_w.val
+    W = bm_res.stat_w.mean
     n_features = len(bm_res.feature_names)
     cm = plt.get_cmap('gist_rainbow')
     colors = [cm(1.*i/n_features) for i in range(n_features)]

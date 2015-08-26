@@ -8,7 +8,6 @@ from scipy.stats.mstats import mquantiles
 
 from .utils import cached_property
 
-Stat = namedtuple("Stat", 'val std ci')
 Regression = namedtuple("Regression", 'stat_w stat_y r2')
 
 
@@ -79,7 +78,7 @@ class StatMixin(object):
             self.regr = None
             self.stat_time = \
                 get_mean_stat(self._av_time, self.confidence)
-        return self.stat_time.val
+        return self.stat_time.mean
 
     @property
     def ci(self):
@@ -123,7 +122,7 @@ class StatMixin(object):
 
     @cached_property
     def features_time(self):
-        return self.x_y[:-1] * self.regr.stat_w.val
+        return self.x_y[:-1] * self.regr.stat_w.mean
 
     @property
     def predicted_time_witout_gc(self):
@@ -164,7 +163,7 @@ class StatMixin(object):
         arr_st_y = np.array([self.x_y[:-1].dot(w) for w in arr_st_w])
         stat_y = get_mean_stat(arr_st_y, **kwargs)
 
-        w = stat_w.val
+        w = stat_w.mean
         w_r2 = np.array([r2(self.features.y, X.dot(w))
                          for X in self.features.X]).mean()
         return Regression(stat_w, stat_y, w_r2)
@@ -209,14 +208,12 @@ def r2(y_true, y_pred):
         else np.inf * (1 - np.mean((y_true-y_pred)**2))
 
 
+Stat = namedtuple("Stat", "mean std ci")
+
+
 def get_mean_stat(values, confidence=0.95):
     alpha = (1 - confidence) / 2
-    if len(values) == 1:
-        [value] = values
-        return Stat(value, 0., np.array([value, value]))
-
-    low, high = mquantiles(values, prob=[alpha, 1-alpha], axis=0)
-    mean_stat = np.mean(values, axis=0)
-    se_stat = np.maximum(np.std(values, ddof=1, axis=0),
-                         np.finfo(float).eps)
-    return Stat(mean_stat, se_stat, np.array([low, high]))
+    lowhigh = mquantiles(values, prob=[alpha, 1 - alpha], axis=0)
+    return Stat(np.mean(values, axis=0),
+                np.std(values, ddof=1, axis=0),
+                np.asarray(lowhigh))
