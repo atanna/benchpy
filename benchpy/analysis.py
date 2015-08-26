@@ -25,7 +25,7 @@ class StatMixin(object):
         self.stat_time = None
         self.regr = None
 
-    def init_features(self, full_time, gc_time=None, alpha=0.5,
+    def init_features(self, full_time, gc_time, alpha=0.5,
                       min_used_samples=10):
         y = full_time
         if self.n_samples > min_used_samples:
@@ -43,26 +43,16 @@ class StatMixin(object):
                                / self.batch_sizes)
 
         self.feature_names = np.array(["batch", "const"])
-        features = [self.batch_sizes, 1.]
-        self.y = y
         self.n = len(self.feature_names)
-        _shape = y.shape + (1,)
-        # _shape = (n_samples, n_batches, 1)  - shape of one of the
-        # feature_columns in full fitting matrix X
-        # with shape (n_samples, n_batches, n_features)
-        # note: n_samples is number of used samples
-        # (it can be less then what has been measured)
-        # The last feature_column in matrix X_y is y (~time)
-        # X_y.shape = (n_samples, n_batches, n_features+1)
-        # if feature has less dimension (f.e. `const`) then y has,
-        # we use extension of it.
-        self.X_y = np.concatenate(
-            [np.array([feature] *
-                      np.prod(y.shape[:y.ndim-np.array(feature).ndim]))
-            .reshape(_shape) for feature in features] +
-            [y.reshape(_shape)],
-            axis=2)
-        self.X = self.X_y[:, :, :-1]
+
+        X_y = np.empty((self.n_samples, self.n_batches, self.n + 1))
+        X_y[:, :, 0] = self.batch_sizes
+        X_y[:, :, 1] = 1
+        X_y[:, :, 2] = y
+
+        self.X_y = X_y
+        self.X = X_y[:, :, :-1]
+        self.y = y
 
     @cached_property
     def time(self):
@@ -75,33 +65,29 @@ class StatMixin(object):
                 get_mean_stat(self._av_time, self.confidence)
         return self.stat_time.mean
 
-
     @cached_property
     def _av_time(self):
         return self.y / self.batch_sizes[:, np.newaxis].T
-
 
     @cached_property
     def x_y(self):
         assert self.batch_sizes[0] == 1
         return self.X_y[:, 0, :].mean(axis=0)
 
-
     def get_stat_table(self):
-        table = dict(Name=self.name,
-                     Time=self.time,
-                     CI=np.maximum(self.stat_time.ci, 0),
-                     Std=self.stat_time.std,
-                     Min=np.min(self._av_time),
-                     Max=np.max(self._av_time),
-                     R2=self.regr.r2,
-                     Features_time=self.x_y[:-1]*self.regr.stat_w.mean,
-                     gc_time=self.gc_time,
-                     Time_without_gc=self.time-self.gc_time,
-                     fit_info=dict(with_gc=self.with_gc,
-                                   samples=self.n_samples,
-                                   batches=self.batch_sizes))
-        return table
+        return dict(Name=self.name,
+                    Time=self.time,
+                    CI=np.maximum(self.stat_time.ci, 0),
+                    Std=self.stat_time.std,
+                    Min=np.min(self._av_time),
+                    Max=np.max(self._av_time),
+                    R2=self.regr.r2,
+                    Features_time=self.x_y[:-1]*self.regr.stat_w.mean,
+                    gc_time=self.gc_time,
+                    Time_without_gc=self.time-self.gc_time,
+                    fit_info=dict(with_gc=self.with_gc,
+                                  samples=self.n_samples,
+                                  batches=self.batch_sizes))
 
     def info_to_plot(self):
         return self.X.mean(axis=0), self.y.mean(axis=0), self.regr.stat_w
@@ -126,7 +112,7 @@ class StatMixin(object):
         return Regression(stat_w, stat_y, w_r2)
 
 
-def ridge_regression(Xy, alpha=0.15):
+def ridge_regression(X_y, alpha=0.15):
     r"""Fits an L2-penalized linear regression to the data.
 
     The ridge coefficients are guaranteed to be non-negative and minimize
@@ -149,8 +135,8 @@ def ridge_regression(Xy, alpha=0.15):
     w : (M, ) ndarray
         Non-negative ridge coefficients.
     """
-    Xy = np.atleast_2d(Xy)
-    X, y = Xy[:, :-1], Xy[:, -1]
+    X_y = np.atleast_2d(X_y)
+    X, y = X_y[:, :-1], X_y[:, -1]
 
     M = X.shape[1]
     X_new = np.append(X, alpha * np.eye(M), axis=0)
@@ -161,8 +147,7 @@ def ridge_regression(Xy, alpha=0.15):
 
 def r2(y_true, y_pred):
     std = y_true.std()
-    return 1 - np.mean((y_true-y_pred)**2) / std if std \
-        else np.inf
+    return 1 - np.mean((y_true-y_pred)**2) / std if std else np.inf
 
 
 Stat = namedtuple("Stat", "mean std ci")
