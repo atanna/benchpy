@@ -65,25 +65,22 @@ class StatMixin(object):
         return self.stat_time.mean
 
     @cached_property
-    def _av_time(self):
-        return self.y / self.batch_sizes[:, np.newaxis].T
-
-    @cached_property
     def x_y(self):
+        # FIXME: we never use y here. Also, a better name?
         assert self.batch_sizes[0] == 1
         return self.X_y[:, 0, :].mean(axis=0)
 
     def get_stat_table(self):
+        mean_time = self.y / self.batch_sizes[:, np.newaxis].T
         return dict(Name=self.name,
                     Time=self.time,
                     CI=np.maximum(self.stat_time.ci, 0),
                     Std=self.stat_time.std,
-                    Min=np.min(self._av_time),
-                    Max=np.max(self._av_time),
+                    Min=mean_time.min(), Max=mean_time.max(),
                     R2=self.regr.r2,
-                    Features_time=self.x_y[:-1]*self.regr.stat_w.mean,
+                    Features_time=self.x_y[:-1] * self.regr.stat_w.mean,
                     gc_time=self.gc_time,
-                    Time_without_gc=self.time-self.gc_time,
+                    Time_without_gc=self.time - self.gc_time,
                     fit_info=dict(with_gc=self.with_gc,
                                   samples=self.n_samples,
                                   batches=self.batch_sizes))
