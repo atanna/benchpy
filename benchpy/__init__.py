@@ -35,7 +35,7 @@ def group(label, group, **run_params):
     return Group(label, group, run_params)
 
 
-def run(bench_or_benches, *args, **kwargs):
+def run(runnable, *args, **kwargs):
     """
     Exec benchmark for each function in case
     See _run's description
@@ -45,13 +45,7 @@ def run(bench_or_benches, *args, **kwargs):
     :param kwargs: kwargs for _run
     :return:
     """
-    print("Run {}".format(bench_or_benches))
-    if isinstance(bench_or_benches, list):
-        from .run import GroupResult
-        res = GroupResult("", [run(bench, *args, **kwargs)
-                            for bench in bench_or_benches])
+    if isinstance(runnable, list):
+        return group("", runnable).run(*args, **kwargs)
     else:
-        res = bench_or_benches.run(*args, **kwargs)
-    print(res)
-    print("Benchmark {} successful finished.".format(bench_or_benches))
-    return res
+        return runnable.run(*args, **kwargs)

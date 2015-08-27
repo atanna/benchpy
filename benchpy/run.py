@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from __future__ import absolute_import
+from __future__ import absolute_import, print_function
 
 import multiprocessing as mp
 from collections import namedtuple
@@ -11,14 +11,18 @@ import numpy as np
 from .analysis import StatMixin
 from .display import VisualMixin, VisualMixinGroup
 from .garbage import gc_manager
+from .utils import to_time_unit
 from ._compat import ticker
 from ._speedups import time_loop
 
 
 class Bench(namedtuple("Bench", "name f run_params")):
     def run(self, *args, **kwargs):
+        print("Running " + self.name)
         kwargs.update(self.run_params, func_name=self.name)
-        return _run(self.f, *args, **kwargs)
+        res = _run(self.f, *args, **kwargs)
+        print()
+        return res
 
 
 class Group(namedtuple("Group", "name group run_params")):
@@ -84,9 +88,10 @@ def _run(f, func_name="",
 
     start_t = ticker()
     for i in range(n_samples):
-        print("start {} sample ({}/{})".format(i, i, n_samples))
-        print("Estimated time to complete: {} s."
-          .format(est_time_for_sample*(n_samples - i)))
+        eta = est_time_for_sample * (n_samples - i)
+        print("Sample {0:02d}/{1:2d}  ETA: {2:6.2f}{3}"
+              .format(i, n_samples, *to_time_unit(eta)))
+
         if n_jobs > 1:
             with mp.Pool(n_jobs) as p:
                 full_time[i], gc_time[i] = \
