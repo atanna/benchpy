@@ -2,6 +2,8 @@
 
 import sys
 import time
+from collections import OrderedDict
+
 
 # ``perf_counter`` was introduced in Python3.3.
 if sys.version_info[:2] < (3, 3):
