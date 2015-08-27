@@ -7,7 +7,7 @@ from functools import partial
 from matplotlib import pyplot as plt
 
 
-def magic_benchpy(self, parameter_s='', cell=None):
+def magic_benchpy(line='', cell=None):
     """
     Run benchpy.run
     %benchpy [[-i] [-g] [-n <N>] [-m <M>] [-p] [-r <R>] [-t <T>] -s<S>] statement
@@ -89,12 +89,17 @@ def magic_benchpy(self, parameter_s='', cell=None):
     +--------------+-----------------------------+-----------------------------+---------------+---------------------------+
 
     """
-    opts, arg_str = self.parse_options(parameter_s, 'igm:n:pr:t:',
-                                       list_all=True, posix=False)
-    glob = self.shell.user_ns
+    from IPython import get_ipython
+    from IPython.core.magics import UserMagics
+
+    ip = get_ipython()
+
+    opts, arg_str = UserMagics(ip).parse_options(
+        line, 'igm:n:pr:t:', list_all=True, posix=False)
+
     if cell is not None:
         arg_str += '\n' + cell
-        arg_str = self.shell.input_transformer_manager.transform_cell(cell)
+        arg_str = ip.input_transformer_manager.transform_cell(cell)
     with_gc = 'g' in opts
     n_samples = int(opts.get('r', [5])[0])
     max_batch = int(opts.get('n', [10])[0])
@@ -103,7 +108,7 @@ def magic_benchpy(self, parameter_s='', cell=None):
     table_labels = opts.get('t', [None])[0]
     if table_labels is not None:
         table_keys = table_labels
-    f = partial(exec, arg_str, glob)
+    f = partial(exec, arg_str, ip.user_ns)
 
     from . import run, bench
     res = run(bench("<magic>", f), with_gc=with_gc,
@@ -124,4 +129,4 @@ def magic_benchpy(self, parameter_s='', cell=None):
 
 def load_ipython_extension(ip):
     """API for IPython to recognize this module as an IPython extension."""
-    ip.define_magic("benchpy", magic_benchpy)
+    ip.register_magic_function(magic_benchpy, "line_cell", magic_name="benchpy")
