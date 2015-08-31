@@ -103,8 +103,8 @@ class StatMixin(object):
         stat_y = get_mean_stat(arr_st_y, **kwargs)
 
         w = stat_w.mean
-        w_r2 = np.array([r2(self.y, X.dot(w))
-                         for X in self.X]).mean()
+        w_r2 = np.array([r2(y, X.dot(w))
+                         for y, X in zip(self.y, self.X)]).mean()
         return Regression(stat_w, stat_y, w_r2)
 
 
