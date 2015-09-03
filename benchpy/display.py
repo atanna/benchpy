@@ -1,31 +1,18 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import absolute_import
-from functools import reduce
 
 import os
-from collections import OrderedDict
 
 import numpy as np
 from matplotlib import pyplot as plt
 from prettytable import PrettyTable
-from .utils import cached_property
+from .utils import to_time_unit
 
 from .exceptions import BenchException
 
-time_measures = OrderedDict(zip(['s', 'ms', 'µs', 'ns'],
-                                [1, 1e3, 1e6, 1e9]))
 
-
-class VisualMixin(object):
-    """
-    Used only with StatMixin.
-    """
-    table_keys = ['Name', 'Time', 'CI', 'Features_time',
-                  'Std', 'Min', 'Max', 'R2',
-                  'gc_time', 'Time_without_gc',
-                  'fit_info']
-
+class Visual(object):
     def plot(self, **kwargs):
         return _plot_result(self, **kwargs)
 
@@ -34,6 +21,12 @@ class VisualMixin(object):
 
     def save_info(self, *args, **kwargs):
         save_info(self, *args, **kwargs)
+
+
+class VisualMixin(Visual):
+    """
+    Used only with StatMixin.
+    """
 
     def get_tables(self, *args, **kwargs):
         return [self.get_table(*args, **kwargs)]
@@ -53,14 +46,12 @@ class VisualMixin(object):
             fit_info += info
         return fit_info[:-1]
 
-    def get_table(self, measure=None, decimals=5):
-        if measure is None:
-            measure = self.time_measure
-        w = time_measures[measure]
+    def get_table(self, unit=None, decimals=5):
+        unit = to_time_unit(self.time)[1]
 
         table = dict(map(lambda x: (x[0], np.round(x[1], decimals))
         if x[0] == "R2"
-        else (x[0], np.round(x[1] * w, decimals))
+        else (x[0], np.round(to_time_unit(x[1], unit)[0], decimals))
         if isinstance(x[1], float) or isinstance(x[1], np.ndarray)
         else (x[0],x[1]), self.get_stat_table().items()))
 
@@ -68,25 +59,19 @@ class VisualMixin(object):
 
         return table
 
-    @cached_property
-    def time_measure(self):
-        t = self.time
-        c = 10
-        for measure, w in time_measures.items():
-            if int(t * w * c):
-                return measure
 
-    def _get_pretty_table_header(self, measure=None, table_keys=None):
+    def _get_pretty_table_header(self, unit=None, table_keys=None):
         if table_keys is None:
             table_keys = self.table_keys
 
-        if measure is None:
-            measure = self.time_measure
+        if unit is None:
+            unit = self.default_unit
+
         pretty_table = PrettyTable(list(
             map(lambda key:
                 "CI[{}]"
                 .format(self.confidence) if key == "CI" else
-                "Time ({})".format(measure) if key == "Time" else
+                "Time ({})".format(unit) if key == "Time" else
                 "Features: {}".format(self.feature_names)
                 if key == "Features_time" else
                 "predicted time without gc" if key == "Time_without_gc"
@@ -106,7 +91,7 @@ class VisualMixin(object):
         return table_keys
 
     def _repr(self, table_keys=None, with_empty=True,
-              with_features=True):
+              unit=None, with_features=True):
         """
         Return representation of class
         :param table_keys: columns of representation table
@@ -118,7 +103,6 @@ class VisualMixin(object):
         Full - all available columns  (='ntcfmMrgi')
         :param with_empty: flag to include/uninclude empty columns
         """
-        measure = self.time_measure
         if table_keys is None:
             table_keys = self.default_table_keys(with_features=with_features)
         elif table_keys == "Full":
@@ -133,14 +117,14 @@ class VisualMixin(object):
                               g='gc_time')
             table_keys = map(lambda x: table_dict[x], table_keys)
         _table_keys = []
-        table = self.get_table(measure)
+        table = self.get_table(unit=unit)
         for key in table_keys:
             if key not in table:
                 raise BenchException("'{}' is unknown key".format(key))
             if not with_empty and not len(str(table[key])):
                 continue
             _table_keys.append(key)
-        pretty_table = self._get_pretty_table_header(measure, _table_keys)
+        pretty_table = self._get_pretty_table_header(unit, _table_keys)
 
         pretty_table.add_row([table[key] for key in _table_keys])
         return pretty_table
@@ -149,19 +133,8 @@ class VisualMixin(object):
         return "\n" + str(self._repr(with_empty=False))
 
 
-class VisualMixinGroup(object):
-    table_keys = VisualMixin.table_keys
-
-    def plot(self, **kwargs):
-        return _plot_group(self, **kwargs)
-
-    def plot_features(self, **kwargs):
-        return plot_features(self, **kwargs)
-
-    def save_info(self, *args, **kwargs):
-        save_info(self, *args, **kwargs)
-
-    def _repr(self, table_keys=None, with_features=True):
+class VisualMixinGroup(Visual):
+    def _repr(self, table_keys=None, unit=None, with_features=True):
         first_res = self.results[0]
         while not isinstance(first_res, VisualMixin):
             first_res = first_res.results[0]
@@ -170,18 +143,19 @@ class VisualMixinGroup(object):
                 first_res.default_table_keys(with_features=with_features)
         elif table_keys is "Full":
             table_keys = self.table_keys
-        measure = first_res.time_measure
-        tables = self.get_tables(measure)
+        if unit is None:
+            unit = first_res.default_unit
+        tables = self.get_tables(unit=unit)
 
-        pretty_table = first_res._get_pretty_table_header(measure, table_keys)
+        pretty_table = first_res._get_pretty_table_header(unit, table_keys)
         pretty_table.align = 'l'
         for table in tables:
             pretty_table.add_row([table[key] for key in table_keys])
 
         return str(pretty_table)
 
-    def get_tables(self, measure, decimals=5):
-        tables = [bm_res.get_table(measure=measure, decimals=decimals)
+    def get_tables(self, unit, decimals=5):
+        tables = [bm_res.get_table(unit=unit, decimals=decimals)
                   for bm_res in self.batch_results]
         return tables
 
@@ -226,6 +200,7 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
                  title="", s=180, shift=0., alpha=0.2,
                  linewidth=2, add_text=True,
                  save=False, path=None,
+                 unit=None,
                  figsize=(25, 15),
                  fontsize=16,
                  group_plot=False,
@@ -238,20 +213,21 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
         ax = fig.add_subplot(111)
     else:
         ax = fig.axes[n_ax]
+    if unit is None:
+        unit = bm_res.default_unit
     batch_shift = 0
     if shift > 0:
         batch_shift = shift * bm_res.batch_sizes[1]
     batch_sizes_ = bm_res.batch_sizes + batch_shift
-    measure = bm_res.time_measure
-    w_measure = time_measures[measure]
     X, y, stat_w = bm_res.info_to_plot()
     for time_ in bm_res.full_time:
-        ax.scatter(batch_sizes_, time_*w_measure, color=c, s=s, alpha=alpha)
+        ax.scatter(batch_sizes_, to_time_unit(time_, unit)[0], color=c, s=s,
+                   alpha=alpha)
     ax.scatter([], [], color=c, s=s, alpha=alpha, label=label+"time")
 
     used_t_color = mixed_color(c, np.array([[0], [1], [0]]), 0.1)
     for time_ in bm_res.y:
-        ax.scatter(batch_sizes_, time_*w_measure, marker="*",
+        ax.scatter(batch_sizes_, to_time_unit(time_, unit)[0], marker="*",
                    color=used_t_color, s=s/5)
     ax.scatter([], [], marker="*", color=used_t_color, s=s/5,
                label=label+"used time")
@@ -261,12 +237,12 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
     if group_plot:
         _alpha = 0.10
         color = mixed_color(c, p=0.3)
-    [ax.plot(batch_sizes_, X_y[:,:-1].dot(stat_w)*w_measure,
+    [ax.plot(batch_sizes_, to_time_unit(X_y[:,:-1].dot(stat_w), unit)[0],
              color=color, linewidth=linewidth, alpha=_alpha)
      for X_y, stat_w in zip(bm_res.arr_X_y, bm_res.arr_st_w)]
 
     mean_label = "{}_mean".format(label) if len(label) else "mean"
-    ax.plot(batch_sizes_, y*w_measure,
+    ax.plot(batch_sizes_, to_time_unit(y, unit)[0],
             color=c, linewidth=linewidth, label=mean_label)
 
     if stat_w is not None:
@@ -274,14 +250,14 @@ def _plot_result(bm_res, fig=None, n_ax=0, label="", c=None,
 
         regr_label = "{}_regr, w={}".format(label, np.round(w, 5)) \
             if len(label) else "regr"
-        ax.plot(batch_sizes_, X.dot(w)*w_measure, 'r--', color=c,
+        ax.plot(batch_sizes_, to_time_unit(X.dot(w), unit)[0], 'r--', color=c,
                 linewidth=linewidth,
                 label=regr_label)
     ax.legend(fontsize=fontsize)
 
     if add_text:
         ax.set_xlabel('Batch_sizes', fontsize=fontsize)
-        ax.set_ylabel('Time, {}'.format(measure), fontsize=fontsize)
+        ax.set_ylabel('Time, {}'.format(unit), fontsize=fontsize)
         ax.grid(True)
         if not len(title):
             title = "Bootstrap regression"
@@ -328,7 +304,7 @@ def _plot_group(gr_res, labels=None, figsize=(25, 15),
 
 def plot_features(bm_res, s=180, alpha=0.4,
                   figsize=(25, 15), fontsize=16,
-                  save=False, path=None, **kwargs):
+                  save=False, path=None, unit=None, **kwargs):
     """
     Return plot with every regression feature (parameter).
     """
@@ -343,7 +319,9 @@ def plot_features(bm_res, s=180, alpha=0.4,
                           save=save,
                           path="{}{}{}".format(name, i, ext), **kwargs)
         return
-    batch_sizes = bm_res.batch_sizes
+    batch_sizes = bm_res.batch_sizes # w_measure = time_measures[measure]
+    if unit is None:
+        unit = bm_res.default_unit
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(1, 1, 1)
     X, y, stat_w = bm_res.info_to_plot()
@@ -352,28 +330,25 @@ def plot_features(bm_res, s=180, alpha=0.4,
     n_features = len(bm_res.feature_names)
     cm = plt.get_cmap('gist_rainbow')
     colors = [cm(1.*i/n_features) for i in range(n_features)]
-    measure = bm_res.time_measure
-    w_measure = time_measures[measure]
     for i, x in enumerate(X.T):
         c = colors[i]
-        w = W[i]
-        w_x = w*x*w_measure
+        w = to_time_unit(W[i], unit)[0]
+        w_x = w * x
         ax.scatter(batch_sizes, w_x, c=c, s=s, alpha=alpha,
                    label="{}  w={}".format(bm_res.feature_names[i],
-                                           np.round(w*w_measure, 5))
-                   .format(i, w))
+                                           np.round(w, 5)))
         ax.plot(batch_sizes, w_x, color=c)
 
     W_from, W_to = stat_w.ci.T
-    ax.plot(batch_sizes, X.dot(W)*w_measure, color='b', label="regr")
-    ax.plot(batch_sizes, X.dot(W_from)*w_measure, 'k--', color='b')
-    ax.plot(batch_sizes, X.dot(W_to)*w_measure, 'k--',
+    ax.plot(batch_sizes, to_time_unit(X.dot(W), unit)[0], color='b', label="regr")
+    ax.plot(batch_sizes, to_time_unit(X.dot(W_from), unit)[0], 'k--', color='b')
+    ax.plot(batch_sizes, to_time_unit(X.dot(W_to), unit)[0], 'k--',
             color='b', label='border_regr')
-    ax.plot(batch_sizes, y*w_measure, 'bo', color='r', label="mean")
-    ax.plot(batch_sizes, y*w_measure, color='r')
+    ax.plot(batch_sizes, to_time_unit(y, unit)[0], 'bo', color='r', label="mean")
+    ax.plot(batch_sizes, to_time_unit(y, unit)[0], color='r')
     ax.legend(fontsize=fontsize)
     ax.set_xlabel('Batch_sizes', fontsize=fontsize)
-    ax.set_ylabel('Time, {}'.format(measure), fontsize=fontsize)
+    ax.set_ylabel('Time, {}'.format(unit), fontsize=fontsize)
     ax.set_title("Regression parameters", fontsize=fontsize*1.4)
     if save:
         save_plot(fig, path=path, figsize=figsize)
@@ -398,7 +373,7 @@ def save_plot(fig, path=None, figsize=(25, 15)):
 
 
 def save_info(res, path=None, path_suffix="", with_plots=True,
-              plot_params=None, prefix_name="",
+              plot_params=None, prefix_name="", unit=None,
               figsize=(20, 12), fontsize=18):
     """
     Save information about benchmarks and time plots.
@@ -416,13 +391,17 @@ def save_info(res, path=None, path_suffix="", with_plots=True,
         save_info(_res, path=path, path_suffix="~name",
                   with_plots=with_plots,
                   plot_params=plot_params,
-                  figsize=figsize, fontsize=fontsize)
+                  figsize=figsize, fontsize=fontsize, unit=unit)
     if len(results):
         return
+
 
     if not isinstance(res, BenchResult):
         raise BenchException("Type of 'res' must belong to "
                              "{BenchRes, GroupRes, list}")
+    if unit is None:
+        unit = res.default_unit
+    unit
     if path_suffix == "~name":
         path_suffix = res.name
     if plot_params is None:
@@ -437,12 +416,12 @@ def save_info(res, path=None, path_suffix="", with_plots=True,
 
     n_used_samples = res.__dict__.get('n_used_samples')
     info = "max_batch {}\nn_batches {}\nn_samples {}  {}\n " \
-            "with_gc {}\nbatch_sizes: {}\n" \
+           "with_gc {}\nbatch_sizes: {}\n" \
         .format(res.batch_sizes[-1],
                 res.n_batches,
                 res.n_samples,
                 "(used {})".format(n_used_samples) if
-                           n_used_samples is not None else '',
+                n_used_samples is not None else '',
                 res.with_gc,
                 res.batch_sizes)
     with open("{}/info{}".format(path, path_suffix), "a") as f:
@@ -458,16 +437,17 @@ def save_info(res, path=None, path_suffix="", with_plots=True,
         features_path = "features{}.jpg".format(path_suffix)
         plot_path = "plot{}.jpg".format(path_suffix)
         res.plot(save=True, path="{}/{}".format(path, plot_path),
-                 figsize=figsize, fontsize=fontsize, **plot_params)
+                 figsize=figsize, fontsize=fontsize, unit=unit, **plot_params)
         res.plot_features(save=True,
                           path="{}/{}".format(path, features_path),
-                          figsize=figsize, fontsize=fontsize, **plot_params)
+                          figsize=figsize, fontsize=fontsize,
+                          unit=unit, **plot_params)
 
     with open("{}/report_template.html"
                       .format(os.path.split(__file__)[0]), "rt") as f:
         template = f.read()
 
-    table = res.get_table()
+    table = res.get_table(unit=unit)
     feature_table = PrettyTable(list(res.feature_names))
     feature_table.add_row(table["Features_time"])
 
@@ -478,7 +458,7 @@ def save_info(res, path=None, path_suffix="", with_plots=True,
                 name=res.name.capitalize(),
                 features_path=features_path,
                 plot_path=plot_path,
-                time_measure=res.time_measure,
+                time_measure=unit,
                 time=table["Time"],
                 ci_0=table["CI"][0],
                 ci_1=table["CI"][1],

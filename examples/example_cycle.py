@@ -16,5 +16,6 @@ if __name__ == "__main__":
         bp.group("+GC", [bp.bench(name, cyclic_list, n_cycles)], with_gc=True),
         bp.group("-GC", [bp.bench(name, cyclic_list, n_cycles)], with_gc=False)
     ]
-
-    print(bp.run(groups, n_samples=16, max_batch=32, n_batches=10, n_jobs=-1))
+    res = bp.run(groups, n_samples=16, max_batch=32, n_batches=10, n_jobs=-1)
+    print(res)
+    res.save_info(path="res")

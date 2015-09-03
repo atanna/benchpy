@@ -34,7 +34,9 @@ class Group(namedtuple("Group", "name group run_params")):
 
 
 class BenchResult(StatMixin, VisualMixin):
-    pass
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.default_unit = to_time_unit(self.time)[1]
 
 
 class GroupResult(VisualMixinGroup):
